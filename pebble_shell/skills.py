@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .context_files import CONTEXT_DIR
+
 SKILL_EXTENSIONS = {".md", ".txt"}
 MAX_SKILL_BYTES = 512_000
 MAX_LOADED_SKILL_CHARS = 12_000
@@ -152,13 +154,20 @@ class SkillLoader:
 
     def _all_skill_paths(self) -> list[Path]:
         paths: list[Path] = []
+        seen_names: set[str] = set()
+
+        def add(path: Path) -> None:
+            if path.is_file() and path.stem not in seen_names:
+                paths.append(path)
+                seen_names.add(path.stem)
+
         for root in (self.workspace, self.bundled_root):
-            direct = root / "SKILLS.md"
-            if direct.is_file():
-                paths.append(direct)
+            add(root / CONTEXT_DIR / "SKILLS.md")
+            add(root / "SKILLS.md")
             skills_dir = root / "skills"
             if skills_dir.is_dir():
-                paths.extend(sorted(path for path in skills_dir.rglob("*") if path.suffix in SKILL_EXTENSIONS))
+                for path in sorted(path for path in skills_dir.rglob("*") if path.suffix in SKILL_EXTENSIONS):
+                    add(path)
         return paths
 
     def _disabled_marker(self, name: str) -> Path:

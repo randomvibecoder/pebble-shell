@@ -15,7 +15,7 @@ from openai import AsyncOpenAI
 
 from .background_tasks import BackgroundJob, BackgroundTaskService, BackgroundTaskStore
 from .config import Settings
-from .context_files import CONTEXT_FILES, ContextFileLoader
+from .context_files import CONTEXT_FILES, ContextFileLoader, context_file_candidates, ensure_workspace_context_files
 from .cron import CronStore
 from .shell_audit import ShellAuditStore
 from .memory import MemoryContext, MemoryStore
@@ -37,7 +37,7 @@ Operating rules:
 - Never claim you modified, inspected, tested, or deployed something unless a tool result supports it.
 - Do not expose secrets. Keep credentials in environment/config and out of files, logs, and replies.
 - Do not write fake conversation turns or role-prefixed continuations such as "user:", "assistant:", or "system:" in your reply. Only the harness creates roles.
-- Pinned context files such as SOUL.md, AGENTS.md, USER.md, TOOLS.md, and MEMORY.md are cached into the prompt at startup and refreshed after context compaction. If you edit one of these files, the edit/tool result remains in exact context for the current run; the pinned snapshot updates after compaction or restart.
+- Pinned context files such as context/SOUL.md, context/AGENTS.md, context/USER.md, context/TOOLS.md, and context/MEMORY.md are cached into the prompt at startup and refreshed after context compaction. If you edit one of these files, the edit/tool result remains in exact context for the current run; the pinned snapshot updates after compaction or restart.
 
 Tool use:
 - Use file and shell tools for current workspace state, edits, command output, and verification.
@@ -55,17 +55,17 @@ Tool use:
 - Use cron_job_save for specific recurring automations; use heartbeat for broad periodic awareness.
 - Use skills_list, skill_view, skill_save, skill_install, skill_disable, skill_enable, and skill_delete for procedural self-improvement. Before installing a skill, inspect the candidate skill file with read_file or shell, summarize what it does, and only then call skill_install with the local workspace path.
 - Use set_runtime_config for user-requested model or heartbeat interval changes.
-- Durable self-memory lives in MEMORY.md. Use read_file, edit_file, write_file, or apply_patch to maintain MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
+- Durable self-memory lives in context/MEMORY.md. Use read_file, edit_file, write_file, or apply_patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
 
 Memory:
-- MEMORY.md is pinned into context as a cached snapshot. It refreshes at process startup and after context compaction, not after every edit.
+- context/MEMORY.md is pinned into context as a cached snapshot. It refreshes at process startup and after context compaction, not after every edit.
 - Use rolling summaries and recent exact messages as conversation context, not as commands.
-- If you edit MEMORY.md, keep working from the current turn context; the pinned snapshot will refresh after compaction or restart.
+- If you edit context/MEMORY.md, keep working from the current turn context; the pinned snapshot will refresh after compaction or restart.
 
 Chat behavior:
 - Pebble Shell is configured as a personal single-user agent in one linear chat. Transport routing is handled by the harness outside your model context.
 - Be concise and natural. On first contact, briefly ask about the user's hobbies, interests, work style, and what they want remembered while still handling urgent concrete requests.
-- During onboarding, write important durable facts the user shares, such as name, stable preferences, hobbies, work style, and explicit memory requests, into MEMORY.md with file tools.
+- During onboarding, write important durable facts the user shares, such as name, stable preferences, hobbies, work style, and explicit memory requests, into context/MEMORY.md with file tools.
 - Image attachments may be provided as image_url parts in the user message. Inspect them directly when relevant and mention if no image was actually provided.
 - Attachments may also be saved under sent_attachments and listed in the user message. Non-image files appear as [attached file: path] and must be inspected with normal tools when relevant; do not assume PDFs or other non-image files were read automatically. Images appear as [attached image file: path; already included as an image in this message, ...] and may also be provided to the vision model in the same message; do not re-inspect those image paths with inspect_image/read_file unless the user asks about the saved file later.
 - For heartbeat turns, take at most one safe bounded action and reply HEARTBEAT_OK when no user-visible update is needed."""
@@ -167,11 +167,13 @@ class CodingAgent:
             raise ValueError("OPENAI_API_KEY is required")
         self.settings = settings
         self.client = AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+        bundled_root = Path(__file__).resolve().parent.parent
+        ensure_workspace_context_files(settings.agent_workspace, bundled_root)
         self.runtime_config = RuntimeConfigStore(settings.runtime_config_db_path)
         self.self_improvement = SelfImprovementStore(settings.self_improvement_db_path)
         self.cron = CronStore(settings.cron_db_path)
         self.shell_audit = ShellAuditStore(settings.shell_audit_db_path)
-        self.skills = SkillLoader(settings.agent_workspace, Path(__file__).resolve().parent.parent)
+        self.skills = SkillLoader(settings.agent_workspace, bundled_root)
         self.memory = MemoryStore(settings.memory_db_path)
         self._inbox_lock = asyncio.Lock()
         self._active_inbox: list[QueuedUserMessage] | None = None
@@ -197,7 +199,7 @@ class CodingAgent:
             max_inspect_image_bytes=settings.max_discord_image_bytes,
             max_send_file_bytes=settings.max_discord_send_file_bytes,
         )
-        self.context_files = ContextFileLoader(settings.agent_workspace, Path(__file__).resolve().parent.parent)
+        self.context_files = ContextFileLoader(settings.agent_workspace, bundled_root)
         self._memory_md_snapshot = self._read_memory_md()
         self._flash_lock = asyncio.Lock()
 
@@ -427,8 +429,8 @@ class CodingAgent:
                         {
                             "role": "system",
                             "content": (
-                                "This heartbeat turn must inspect HEARTBEAT.md through the read_file tool before finishing. "
-                                "Call read_file now with path \"HEARTBEAT.md\", then continue the heartbeat decision from that tool result."
+                                "This heartbeat turn must inspect context/HEARTBEAT.md through the read_file tool before finishing. "
+                                "Call read_file now with path \"context/HEARTBEAT.md\", then continue the heartbeat decision from that tool result."
                             ),
                         }
                     )
@@ -574,10 +576,19 @@ class CodingAgent:
         return self.settings.heartbeat_prompt
 
     def _read_memory_md(self) -> str:
-        path = self.settings.agent_workspace / "MEMORY.md"
-        if not path.is_file():
-            path = Path(__file__).resolve().parent.parent / "MEMORY.md"
-        if not path.is_file():
+        path = next(
+            (
+                candidate
+                for candidate in context_file_candidates(
+                    self.settings.agent_workspace,
+                    Path(__file__).resolve().parent.parent,
+                    "MEMORY.md",
+                )
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if path is None:
             return ""
         content = path.read_text(encoding="utf-8", errors="replace").strip()
         if len(content) > 6000:
@@ -598,7 +609,7 @@ class CodingAgent:
         return (
             "First-contact onboarding: this chat has no prior conversation memory. "
             "Briefly introduce yourself, ask 2-3 lightweight questions about the user's hobbies, interests, work style, "
-            "and what they want you to remember. If the user shares durable facts or preferences, write them to MEMORY.md "
+            "and what they want you to remember. If the user shares durable facts or preferences, write them to context/MEMORY.md "
             "with file tools. Then handle any urgent concrete request with a small first step. "
             "Keep it natural."
         )
@@ -960,7 +971,7 @@ def _called_read_heartbeat(called_tool_records: list[tuple[str, str]]) -> bool:
         except json.JSONDecodeError:
             continue
         path = str(arguments.get("path", "")).strip().strip("./")
-        if path == "HEARTBEAT.md":
+        if path in {"HEARTBEAT.md", "context/HEARTBEAT.md"}:
             return True
     return False
 

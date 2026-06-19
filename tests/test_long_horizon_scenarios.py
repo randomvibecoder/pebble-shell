@@ -66,8 +66,8 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
     assert tools.skill_save("incident-review", "Always check incident.md before proposing recovery.", "incident workflow").ok
     assert tools.webhook_hook_save("email-alert", "Triage the incoming email payload.").ok
     assert tools.cron_job_save("daily-check", "Review outstanding state.", 86_400).ok
-    assert tools.write_file("MEMORY.md", "The recovery owner is platform-oncall.").ok
-    assert "platform-oncall" in tools.read_file("MEMORY.md").output
+    assert tools.write_file("context/MEMORY.md", "The recovery owner is platform-oncall.").ok
+    assert "platform-oncall" in tools.read_file("context/MEMORY.md").output
 
     with sqlite3.connect(tmp_path / "cron.sqlite3") as conn:
         conn.execute("update cron_jobs set next_run_at = ?", (0,))
@@ -91,7 +91,7 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
     assert reloaded_self_improvement.get_hook("email-alert") is not None
     assert reloaded_cron.list_runs("daily-check")[0]["ok"]
     assert reloaded_memory.get_context("", 10).recent_messages
-    assert (workspace / "MEMORY.md").read_text(encoding="utf-8") == "The recovery owner is platform-oncall."
+    assert (workspace / "context" / "MEMORY.md").read_text(encoding="utf-8") == "The recovery owner is platform-oncall."
     assert cron_outputs == ["handled cron:daily-check"]
     assert heartbeat_output == "Need attention"
     assert "handled cron:daily-check" in delivered

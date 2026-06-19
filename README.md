@@ -11,7 +11,7 @@ A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It e
 - Optional Discord bot gateway support when `DISCORD_BOT_TOKEN` is provided.
 - OpenAI-compatible chat completions through `OPENAI_BASE_URL`.
 - Optional Exa API web search through `EXA_API_KEY`.
-- SQLite-backed conversation history, reactive summaries, and cached `MEMORY.md` durable memory.
+- SQLite-backed conversation history, reactive summaries, and cached `context/MEMORY.md` durable memory.
 
 ## Quick Start
 
@@ -113,7 +113,7 @@ The agent can improve itself through bounded, auditable primitives:
 - `skill_install`: install a local workspace `SKILL.md`, `.md`, or `.txt` file into `/workspace/skills` after inspecting it.
 - `skill_disable` / `skill_enable`: unload or reload a skill without deleting it.
 - `skill_delete`: delete a workspace-installed skill. Bundled skills can be disabled but not deleted by the agent.
-- `MEMORY.md`: durable self-memory maintained with normal file tools.
+- `context/MEMORY.md`: durable self-memory maintained with normal file tools.
 - `webhook_hook_save`: register a named webhook, for example an email event hook.
 - `set_runtime_config`: change safe runtime settings like model or heartbeat interval.
 - `cron_job_save`: create scheduled automations with persisted run history.
@@ -137,13 +137,13 @@ The Docker entrypoint starts the HTTP server and the cron runner. It also starts
 
 The agent keeps three layers of context:
 
-- A cached `MEMORY.md` snapshot for durable self-memory. It is loaded at process start and refreshed after context compaction, not reread every turn.
+- A cached `context/MEMORY.md` snapshot for durable self-memory. It is loaded at process start and refreshed after context compaction, not reread every turn.
 - Recent exact messages for the primary chat, bounded by both `RECENT_MESSAGE_LIMIT` and `RECENT_MESSAGE_TOKEN_BUDGET`.
 - Reactive summaries when a foreground or background model call hits a provider context-length limit.
 
-The system prompt, repository context files, relevant skills, cached `MEMORY.md`, and newest user request are placed in context. Pebble Shell keeps a large exact message window by default (`RECENT_MESSAGE_LIMIT=1000`, `RECENT_MESSAGE_TOKEN_BUDGET=0`) so the model can use its available context. During an active foreground or background run, Pebble Shell keeps using the full assembled context until the provider returns a context-length error; then it summarizes older non-system conversation/tool history, refreshes `MEMORY.md`, keeps the newest exact messages, reappends the current message/tool result, retries, and sends `[compacted]` to the active Discord transport for debugging.
+The system prompt, repository context files from `context/`, relevant skills, cached `context/MEMORY.md`, and newest user request are placed in context. Pebble Shell keeps a large exact message window by default (`RECENT_MESSAGE_LIMIT=1000`, `RECENT_MESSAGE_TOKEN_BUDGET=0`) so the model can use its available context. During an active foreground or background run, Pebble Shell keeps using the full assembled context until the provider returns a context-length error; then it summarizes older non-system conversation/tool history, refreshes `context/MEMORY.md`, keeps the newest exact messages, reappends the current message/tool result, retries, and sends `[compacted]` to the active Discord transport for debugging.
 
-To remember stable preferences or operating notes, the agent edits `MEMORY.md` with normal file tools. If `MEMORY.md` changes during a turn, the current cached prompt snapshot does not change until compaction or restart, which keeps most prompt prefixes cacheable.
+To remember stable preferences or operating notes, the agent edits `context/MEMORY.md` with normal file tools. If `context/MEMORY.md` changes during a turn, the current cached prompt snapshot does not change until compaction or restart, which keeps most prompt prefixes cacheable.
 
 On first contact in the chat, the agent is prompted to ask a few lightweight questions about the user's hobbies, interests, work style, and what it should remember.
 
@@ -154,3 +154,20 @@ The default integration style is CLI-first inside Docker. The agent should disco
 ## Shell Execution
 
 Shell commands are audited in SQLite and run inside the Docker container workspace. For v0.0.1, Pebble allows container-local shell commands, including `sudo`, package installs, and piped install scripts; Docker isolation is the safety boundary.
+
+## Repository Layout
+
+Pebble-facing prompt and context files are grouped under `context/`:
+
+```text
+context/
+  AGENTS.md
+  HEARTBEAT.md
+  MEMORY.md
+  SKILLS.md
+  SOUL.md
+  TOOLS.md
+  USER.md
+```
+
+On startup, Pebble seeds missing workspace copies under `/workspace/context/` so the agent can edit `context/MEMORY.md`, `context/HEARTBEAT.md`, and the other context files with normal workspace tools. Root `AGENTS.md` remains as repository-level guidance for coding tools that look for that conventional filename.

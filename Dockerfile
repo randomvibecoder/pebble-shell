@@ -32,7 +32,8 @@ RUN pip install --upgrade pip \
     && playwright install --with-deps chromium \
     && chown -R agent:agent /ms-playwright
 
-COPY --chown=agent:agent pyproject.toml README.md AGENTS.md SOUL.md USER.md TOOLS.md HEARTBEAT.md SKILLS.md MEMORY.md /app/
+COPY --chown=agent:agent pyproject.toml README.md AGENTS.md /app/
+COPY --chown=agent:agent context /app/context
 COPY --chown=agent:agent pebble_shell /app/pebble_shell
 RUN pip install --no-deps .
 

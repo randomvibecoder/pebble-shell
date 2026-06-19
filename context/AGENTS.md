@@ -1,6 +1,6 @@
 # AGENTS
 
-Pebble Shell is a Docker-isolated coding and operations agent. Pebble-facing context files live in `context/`.
+Pebble Shell is a Docker-isolated coding and operations agent.
 
 - Keep file and shell work inside the configured workspace.
 - Prefer tools for current state, file changes, browser checks, runtime configuration, skills, and hooks.

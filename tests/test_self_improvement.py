@@ -20,7 +20,8 @@ def test_skill_save_creates_loadable_skill(tmp_path: Path) -> None:
 
 
 def test_loader_includes_default_skills_file(tmp_path: Path) -> None:
-    (tmp_path / "SKILLS.md").write_text("# Defaults\n\nAlways use runtime config tools.", encoding="utf-8")
+    (tmp_path / "context").mkdir()
+    (tmp_path / "context" / "SKILLS.md").write_text("# Defaults\n\nAlways use runtime config tools.", encoding="utf-8")
     skills = SkillLoader(tmp_path / "workspace", tmp_path)
 
     loaded = skills.load("change heartbeat to one hour")

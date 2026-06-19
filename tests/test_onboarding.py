@@ -134,7 +134,7 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
     assert "one foreground supervisor and up to four long-running background workers" in core_prompt
     assert "background_task_start" in core_prompt
     assert "process_start/processes_list/process_status/process_logs/process_stop" in core_prompt
-    assert "MEMORY.md" in core_prompt
+    assert "context/MEMORY.md" in core_prompt
     assert "record_memory" not in core_prompt
     assert "set_runtime_config" in core_prompt
 
@@ -171,7 +171,7 @@ async def test_recent_memory_is_sent_as_native_roles_not_system_transcript(tmp_p
 
 def test_dump_next_heartbeat_context_writes_exact_chat_completion_kwargs(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    (agent.settings.agent_workspace / "HEARTBEAT.md").write_text("SECRET HEARTBEAT BODY", encoding="utf-8")
+    (agent.settings.agent_workspace / "context" / "HEARTBEAT.md").write_text("SECRET HEARTBEAT BODY", encoding="utf-8")
     agent.memory.add_message("user", "hello")
     agent.memory.add_message("assistant", "hi")
 
@@ -186,14 +186,14 @@ def test_dump_next_heartbeat_context_writes_exact_chat_completion_kwargs(tmp_pat
     assert {"role": "assistant", "content": "hi"} in payload["messages"]
     assert payload["messages"][-1]["role"] == "user"
     assert "read_file" in payload["messages"][-1]["content"]
-    assert "HEARTBEAT.md" in payload["messages"][-1]["content"]
+    assert "context/HEARTBEAT.md" in payload["messages"][-1]["content"]
     assert "SECRET HEARTBEAT BODY" not in str(payload["messages"])
 
 
 @pytest.mark.asyncio
 async def test_memory_md_is_cached_until_compaction_or_restart(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    memory_path = agent.settings.agent_workspace / "MEMORY.md"
+    memory_path = agent.settings.agent_workspace / "context" / "MEMORY.md"
     memory_path.write_text("initial memory", encoding="utf-8")
     restarted = _agent(tmp_path)
     fake_client = FakeClient()
@@ -213,8 +213,8 @@ async def test_memory_md_is_cached_until_compaction_or_restart(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_context_files_are_cached_until_compaction_or_restart(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    tools_path = workspace / "TOOLS.md"
+    (workspace / "context").mkdir(parents=True)
+    tools_path = workspace / "context" / "TOOLS.md"
     tools_path.write_text("initial tools", encoding="utf-8")
     agent = _agent(tmp_path)
     fake_client = FakeClient()
@@ -237,7 +237,7 @@ async def test_memory_md_refreshes_after_context_compaction(tmp_path: Path) -> N
     import httpx
 
     agent = _agent(tmp_path)
-    memory_path = agent.settings.agent_workspace / "MEMORY.md"
+    memory_path = agent.settings.agent_workspace / "context" / "MEMORY.md"
     memory_path.write_text("initial memory", encoding="utf-8")
     restarted = _agent(tmp_path)
     restarted.memory.add_message("user", "old one")
@@ -268,8 +268,8 @@ async def test_context_files_refresh_after_context_compaction(tmp_path: Path) ->
     import httpx
 
     workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    tools_path = workspace / "TOOLS.md"
+    (workspace / "context").mkdir(parents=True)
+    tools_path = workspace / "context" / "TOOLS.md"
     tools_path.write_text("initial tools", encoding="utf-8")
     agent = _agent(tmp_path)
     agent.memory.add_message("user", "old one")
@@ -438,11 +438,11 @@ async def test_empty_final_recovery_falls_back_to_visible_message(tmp_path: Path
 @pytest.mark.asyncio
 async def test_heartbeat_forces_read_file_before_final_answer(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    (agent.settings.agent_workspace / "HEARTBEAT.md").write_text("Check the dashboard.", encoding="utf-8")
+    (agent.settings.agent_workspace / "context" / "HEARTBEAT.md").write_text("Check the dashboard.", encoding="utf-8")
     fake_client = SequencedClient()
     fake_client.chat.completions.responses = [
         _final_response("HEARTBEAT_OK"),
-        _tool_call_response_named("read_file", {"path": "HEARTBEAT.md"}),
+        _tool_call_response_named("read_file", {"path": "context/HEARTBEAT.md"}),
         _final_response("HEARTBEAT_OK"),
     ]
     agent.client = fake_client  # type: ignore[assignment]
@@ -454,7 +454,7 @@ async def test_heartbeat_forces_read_file_before_final_answer(tmp_path: Path) ->
     calls = fake_client.chat.completions.calls
     assert len(calls) == 3
     assert any(
-        message["role"] == "system" and "must inspect HEARTBEAT.md through the read_file tool" in message["content"]
+        message["role"] == "system" and "must inspect context/HEARTBEAT.md through the read_file tool" in message["content"]
         for message in calls[1]["messages"]
     )
     assert any(
