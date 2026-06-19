@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pebble_shell.discord_bot import _format_agent_failure
 from pebble_shell.discord_bot import _send_file
 
 
@@ -48,3 +49,11 @@ async def test_send_file_reports_final_discord_failure_after_retries(tmp_path: P
         await _send_file(FakeClient(channel), "123", path, backoffs=(0, 0))
 
     assert channel.calls == 3
+
+
+def test_format_agent_failure_reports_provider_auth_lockout() -> None:
+    message = _format_agent_failure(RuntimeError("Too many authentication failures. Please try again later."))
+
+    assert "received your message" in message
+    assert "Too many authentication failures" in message
+    assert "API key" in message

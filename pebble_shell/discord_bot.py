@@ -82,8 +82,13 @@ async def run_discord_bot(settings: Settings, agent: CodingAgent | None = None) 
         content = append_attachment_lines(content, saved.lines)
         if await agent.enqueue_user_message(content, saved.images):
             return
-        async with message.channel.typing():
-            response = await agent.run_user_message(content, saved.images)
+        try:
+            async with message.channel.typing():
+                response = await agent.run_user_message(content, saved.images)
+        except Exception as exc:  # noqa: BLE001 - keep Discord users informed when provider/tool failures occur.
+            LOGGER.exception("Discord user message failed")
+            await message.reply(_format_agent_failure(exc), mention_author=False)
+            return
         chunks = split_discord_content(response.content)
         await message.reply(chunks[0], mention_author=False)
         for chunk in chunks[1:]:
@@ -113,6 +118,20 @@ def _parse_background_agents_args(content: str) -> tuple[int, str | None]:
         elif key == "status" and value:
             status = value
     return max(1, min(limit, 100)), status
+
+
+def _format_agent_failure(exc: BaseException) -> str:
+    text = str(exc)
+    lower = text.lower()
+    if "too many authentication failures" in lower:
+        return (
+            "I received your message, but the model provider rejected the API key with "
+            "`Too many authentication failures`. Check the NanoGPT key configured in Pebble, "
+            "or wait for the provider lockout to clear."
+        )
+    if "all configured openai-compatible models failed" in lower:
+        return "I received your message, but all configured model providers failed. Check Pebble's model/API configuration."
+    return f"I received your message, but hit an internal error: {type(exc).__name__}."
 
 
 async def _deliver(client: discord.Client, channel_id: str, text: str) -> None:

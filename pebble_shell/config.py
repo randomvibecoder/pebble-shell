@@ -18,10 +18,10 @@ class Settings(BaseSettings):
 
     openai_base_url: str = "https://nano-gpt.com/api/v1"
     openai_api_key: str = Field(default="", repr=False)
-    openai_model: str = "claude-haiku-4-5-20251001"
-    openai_fallback_models: str = "openai/gpt-5.4"
-    openai_flash_model: str = "claude-haiku-4-5-20251001"
-    openai_flash_fallback_models: str = "openai/gpt-5.4-nano"
+    openai_model: str = "xiaomi/mimo-v2.5-pro:thinking"
+    openai_fallback_models: str = "claude-haiku-4-5-20251001"
+    openai_flash_model: str = "xiaomi/mimo-v2.5:thinking"
+    openai_flash_fallback_models: str = "claude-haiku-4-5-20251001"
     api_auth_token: str = Field(default="", repr=False)
     exa_api_key: str = Field(default="", repr=False)
     exa_base_url: str = "https://api.exa.ai"

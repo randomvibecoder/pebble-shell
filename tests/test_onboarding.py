@@ -181,7 +181,7 @@ def test_dump_next_heartbeat_context_writes_exact_chat_completion_kwargs(tmp_pat
 
     assert path.name.startswith("heartbeat_")
     payload = __import__("json").loads(path.read_text(encoding="utf-8"))["payload"]
-    assert payload["model"] == "claude-haiku-4-5-20251001"
+    assert payload["model"] == "xiaomi/mimo-v2.5-pro:thinking"
     assert payload["tool_choice"] == "auto"
     assert isinstance(payload["tools"], list)
     assert {"role": "user", "content": "hello"} in payload["messages"]
@@ -329,7 +329,7 @@ async def test_image_inputs_are_sent_as_multimodal_content_and_stored_as_referen
     )
 
     user_message = next(message for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "user")
-    assert fake_client.chat.completions.calls[0]["model"] == "claude-haiku-4-5-20251001"
+    assert fake_client.chat.completions.calls[0]["model"] == "xiaomi/mimo-v2.5-pro:thinking"
     assert user_message["role"] == "user"
     assert user_message["content"][0]["type"] == "text"
     assert user_message["content"][1] == {
