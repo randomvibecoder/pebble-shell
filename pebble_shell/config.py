@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     recent_message_token_budget: int = 0
     heartbeat_every_seconds: int = 7200
     heartbeat_prompt: str = (
-        "This is a heartbeat turn. First call read_file with path context/HEARTBEAT.md, even if the file may not exist. "
-        "If context/HEARTBEAT.md exists, follow it strictly. "
+        "This is a heartbeat turn. First call read_file with path context/HEARTBEAT.md. "
+        "Follow context/HEARTBEAT.md strictly. "
         "Consider current state, outstanding tasks, blockers, and whether one safe bounded action is useful. "
         "If nothing needs attention, reply HEARTBEAT_OK."
     )
