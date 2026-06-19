@@ -3,8 +3,6 @@
 A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It exposes:
 
 - `POST /chat` for direct testing.
-- `POST /discord/message` for Discord-shaped `MESSAGE_CREATE` test payloads.
-- `POST /discord/interaction-test` for local Discord application-command payload replay.
 - `POST /discord/interactions` for signed Discord HTTP interactions.
 - `POST /webhooks/{name}` for agent-created external hooks.
 - `GET /public/{path}` for published static files from `/workspace/public`.
@@ -13,7 +11,7 @@ A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It e
 - Optional Discord bot gateway support when `DISCORD_BOT_TOKEN` is provided.
 - OpenAI-compatible chat completions through `OPENAI_BASE_URL`.
 - Optional Exa API web search through `EXA_API_KEY`.
-- SQLite-backed pinned memory, conversation memory, summaries, and indexed document retrieval.
+- SQLite-backed conversation history, reactive summaries, and cached `MEMORY.md` durable memory.
 
 ## Quick Start
 
@@ -37,22 +35,6 @@ curl -s http://localhost:8080/chat \
   -d '{"content": "List the files in your workspace."}' | jq
 ```
 
-Send a Discord-shaped test message:
-
-```bash
-curl -s http://localhost:8080/discord/message \
-  -H 'content-type: application/json' \
-  -d '{
-    "t": "MESSAGE_CREATE",
-    "d": {
-      "id": "1",
-      "channel_id": "local",
-      "author": {"id": "user-1", "username": "tester", "bot": false},
-      "content": "List the files in your workspace."
-    }
-  }' | jq
-```
-
 ## Discord Notes
 
 Discord client ID and client secret identify the OAuth application, but they do not let a service receive gateway message events by themselves.
@@ -62,18 +44,16 @@ There are two production paths:
 - HTTP interactions: set `DISCORD_PUBLIC_KEY`, expose `POST /discord/interactions` publicly, and paste that URL into the Discord Developer Portal as the Interactions Endpoint URL. The endpoint verifies `X-Signature-Ed25519` and `X-Signature-Timestamp`, answers Discord `PING` requests, immediately defers `/agent` commands, and posts the agent result back through Discord's interaction follow-up webhook.
 - Gateway bot messages: set `DISCORD_BOT_TOKEN`. The bot replies to DMs and mentions through Discord gateway events.
 
-Keep `POST /discord/message` for local testing with Discord-shaped `MESSAGE_CREATE` payloads when real Discord credentials or public ingress are unavailable. Use `POST /discord/interaction-test` to replay a Discord application-command JSON payload locally without Discord request signatures; production traffic should use signed `POST /discord/interactions`.
+Discord-originated messages are restricted to `DISCORD_ALLOWED_USER_ID` when configured. Gateway messages from other users are ignored; signed HTTP interactions from other users are rejected with `403`.
 
-Discord-originated messages are restricted to `DISCORD_ALLOWED_USER_ID` when configured. Gateway messages from other users are ignored; Discord-shaped HTTP test routes reject other users with `403`.
-
-Gateway messages and local `POST /discord/message` payloads save every attachment under `/workspace/sent_attachments/{YYYY}/{MM}/{DD}/{upload_id}/...`. Non-image files append `[attached file: ...]` lines to the agent-visible message. Image files append `[attached image file: ...; already included as an image in this message, ...]` and are also passed to vision-capable OpenAI-compatible models as `image_url` message parts. PDFs and other non-image files are saved for normal workspace tool use; they are not read into model context automatically.
+Gateway messages save every attachment under `/workspace/sent_attachments/{YYYY}/{MM}/{DD}/{upload_id}/...`. Non-image files append `[attached file: ...]` lines to the agent-visible message. Image files append `[attached image file: ...; already included as an image in this message, ...]` and are also passed to vision-capable OpenAI-compatible models as `image_url` message parts. PDFs and other non-image files are saved for normal workspace tool use; they are not read into model context automatically.
 
 Long agent replies are split into Discord-safe message chunks for both interaction follow-ups and gateway replies instead of being silently truncated.
 
 Register the `/agent prompt:` slash command after the environment is configured:
 
 ```bash
-opencode-agent-discord-register --guild-id YOUR_TEST_GUILD_ID
+pebble-shell-discord-register --guild-id YOUR_TEST_GUILD_ID
 ```
 
 Omit `--guild-id` to register a global command. Guild commands update faster for testing. The registration command uses `DISCORD_BOT_TOKEN` when set, otherwise it uses `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` with Discord's client-credentials `applications.commands.update` scope.
@@ -81,13 +61,13 @@ Omit `--guild-id` to register a global command. Guild commands update faster for
 Print an invite URL:
 
 ```bash
-opencode-agent-discord-register --print-invite
+pebble-shell-discord-register --print-invite
 ```
 
 To test proactive Discord DMs, set `DISCORD_BOT_TOKEN` and run:
 
 ```bash
-opencode-agent-discord-dm --user-id 111111111111111111 --random-number
+pebble-shell-discord-dm --user-id 111111111111111111 --random-number
 ```
 
 Discord client credentials can register application commands, but sending DMs requires a bot token.
@@ -105,8 +85,6 @@ Set `DISCORD_ALLOWED_USER_ID` to the single Discord user ID Pebble Shell should 
 Set `API_AUTH_TOKEN` before exposing local/admin routes. When set, these endpoints require `Authorization: Bearer <token>`:
 
 - `POST /chat`
-- `POST /discord/message`
-- `POST /discord/interaction-test`
 - `POST /webhooks/{name}`
 - `GET /status`
 - Cron and heartbeat control endpoints
@@ -163,7 +141,7 @@ The agent keeps three layers of context:
 - Recent exact messages for the primary chat, bounded by both `RECENT_MESSAGE_LIMIT` and `RECENT_MESSAGE_TOKEN_BUDGET`.
 - Reactive summaries when a foreground or background model call hits a provider context-length limit.
 
-The system prompt, repository context files, relevant skills, cached `MEMORY.md`, and newest user request are placed in context. Pebble Shell keeps a large exact message window by default (`RECENT_MESSAGE_LIMIT=1000`, `RECENT_MESSAGE_TOKEN_BUDGET=0`) so the model can use its available context. During an active foreground or background run, Pebble Shell keeps using the full assembled context until the provider returns a context-length error; then it summarizes older non-system conversation/tool history, refreshes `MEMORY.md`, keeps the newest exact messages, reappends the current message/tool result, retries, and sends a short notice such as `[foreground, summarized 12800 tokens to 900 tokens]`.
+The system prompt, repository context files, relevant skills, cached `MEMORY.md`, and newest user request are placed in context. Pebble Shell keeps a large exact message window by default (`RECENT_MESSAGE_LIMIT=1000`, `RECENT_MESSAGE_TOKEN_BUDGET=0`) so the model can use its available context. During an active foreground or background run, Pebble Shell keeps using the full assembled context until the provider returns a context-length error; then it summarizes older non-system conversation/tool history, refreshes `MEMORY.md`, keeps the newest exact messages, reappends the current message/tool result, retries, and sends `[compacted]` to the active Discord transport for debugging.
 
 To remember stable preferences or operating notes, the agent edits `MEMORY.md` with normal file tools. If `MEMORY.md` changes during a turn, the current cached prompt snapshot does not change until compaction or restart, which keeps most prompt prefixes cacheable.
 
@@ -173,6 +151,6 @@ On first contact in the chat, the agent is prompted to ask a few lightweight que
 
 The default integration style is CLI-first inside Docker. The agent should discover tools with `--help` or project skills, prefer dry runs and JSON output, and compose commands through normal Unix pipelines. This keeps prompt context small compared with preloading large external tool schemas. MCP-style integrations can still be added later for compliance-sensitive or multi-tenant APIs where governance is worth the extra context overhead.
 
-## Execution Policy
+## Shell Execution
 
 Shell commands are audited in SQLite and run inside the Docker container workspace. For v0.0.1, Pebble allows container-local shell commands, including `sudo`, package installs, and piped install scripts; Docker isolation is the safety boundary.

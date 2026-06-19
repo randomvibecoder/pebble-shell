@@ -8,10 +8,9 @@ from typing import Any
 
 import pytest
 
-from opencode_agent.agent import AgentResponse, CodingAgent
-from opencode_agent.config import Settings
-from opencode_agent.background_tasks import _render_status_yaml
-from opencode_agent.tools import CURRENT_CHANNEL_ID, CURRENT_USER_ID
+from pebble_shell.agent import AgentResponse, CodingAgent
+from pebble_shell.config import Settings
+from pebble_shell.background_tasks import _render_status_yaml
 
 
 class FakeChoice:
@@ -103,17 +102,11 @@ async def test_background_task_tools_limit_active_workers_to_four(tmp_path: Path
 
     agent.run_background_task = hold_until_cancelled  # type: ignore[method-assign]
 
-    user_token = CURRENT_USER_ID.set("user-1")
-    channel_token = CURRENT_CHANNEL_ID.set("chan")
-    try:
-        started = [
-            agent.tools.run("background_task_start", {"prompt": f"build site {index}", "title": f"site {index}"})
-            for index in range(4)
-        ]
-        fifth = agent.tools.run("background_task_start", {"prompt": "build one more", "title": "overflow"})
-    finally:
-        CURRENT_CHANNEL_ID.reset(channel_token)
-        CURRENT_USER_ID.reset(user_token)
+    started = [
+        agent.tools.run("background_task_start", {"prompt": f"build site {index}", "title": f"site {index}"})
+        for index in range(4)
+    ]
+    fifth = agent.tools.run("background_task_start", {"prompt": "build one more", "title": "overflow"})
 
     assert all(result.ok for result in started)
     assert not fifth.ok
@@ -147,10 +140,8 @@ async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_pat
         ]
     )  # type: ignore[assignment]
 
-    response = await agent.run(
+    response = await agent.run_user_message(
         "Start a background worker with background_task_start. Title: real monitor. Task: monitor the test sites.",
-        "user-1",
-        "chan",
     )
 
     assert response.content == "Worker started with the real tool result."
@@ -169,7 +160,7 @@ async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_pat
 @pytest.mark.asyncio
 async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
     (agent.settings.agent_workspace / job.folder).mkdir(parents=True)
     agent.client = FakeClient(
         [
@@ -192,13 +183,12 @@ async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> No
     prompt_text = "\n".join(str(message.get("content", "")) for message in first_call["messages"])
     assert "Original Discord user" not in prompt_text
     assert "Original Discord channel" not in prompt_text
-    assert "user-1" not in prompt_text
 
 
 @pytest.mark.asyncio
 async def test_background_job_self_check_complete_records_usage(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("Wrote and verified the page."), FakeUsage(10, 4, 14)),
@@ -224,7 +214,7 @@ async def test_background_job_self_check_complete_records_usage(tmp_path: Path) 
 @pytest.mark.asyncio
 async def test_background_job_needs_attention_after_three_self_check_retries(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("finish a hard task", "hard", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("finish a hard task", "hard", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("I am not done yet.")),
@@ -251,7 +241,7 @@ async def test_background_job_needs_attention_after_three_self_check_retries(tmp
 @pytest.mark.asyncio
 async def test_background_job_needs_attention_survives_flash_summary_failure(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("finish a hard task", "hard", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("finish a hard task", "hard", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("I am not done yet.")),
@@ -280,7 +270,7 @@ async def test_background_job_needs_attention_survives_flash_summary_failure(tmp
 @pytest.mark.asyncio
 async def test_background_job_blocked_remains_messageable_and_resumes(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("do a blocked task", "blocked", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("do a blocked task", "blocked", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("Blocked on missing input.")),
@@ -305,7 +295,7 @@ async def test_background_job_blocked_remains_messageable_and_resumes(tmp_path: 
 @pytest.mark.asyncio
 async def test_background_agents_status_table_uses_flash_activity(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a status page", "status page", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.add_event(job.id, "tool_call", "write_file: ok")
     agent.background_store.record_model_usage(job.id, "claude-haiku-4-5-20251001", 100, 20, 120)
@@ -355,7 +345,7 @@ def test_background_agents_status_yaml_is_human_readable() -> None:
 @pytest.mark.asyncio
 async def test_background_agents_status_table_falls_back_when_flash_fails(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a status page", "status page", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.add_event(job.id, "tool_call", "write_file: ok")
     async def fail_flash(**kwargs):
@@ -373,7 +363,7 @@ async def test_background_agents_status_table_falls_back_when_flash_fails(tmp_pa
 @pytest.mark.asyncio
 async def test_background_task_message_reaches_running_worker_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.enqueue_message(job.id, "Change the background from light to dark.")
     agent.client = FakeClient([FakeResponse(FinalMessage("Changed to dark."))])  # type: ignore[assignment]
@@ -388,7 +378,7 @@ async def test_background_task_message_reaches_running_worker_context(tmp_path: 
 @pytest.mark.asyncio
 async def test_background_task_ask_uses_no_tool_exact_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
     agent.background_store.save_context(
         job.id,
         [
@@ -408,7 +398,7 @@ async def test_background_task_ask_uses_no_tool_exact_context(tmp_path: Path) ->
 
 def test_background_store_marks_active_jobs_interrupted_on_restart(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("long job", "long", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("long job", "long", "background_jobs/test")
     agent.background_store.start_job(job.id)
 
     restarted = _agent(tmp_path)
@@ -452,12 +442,12 @@ async def test_end_to_end_onboarding_four_parallel_websites_and_midrun_question(
 
     agent.run_background_task = long_website_job  # type: ignore[method-assign]
 
-    assert (await agent.run("hello", "user-1", "chan")).content.startswith("Hi")
-    assert (await agent.run("I'm Riley. I like chess, synths, and web design.", "user-1", "chan")).content.startswith("Nice")
+    assert (await agent.run_user_message("hello")).content.startswith("Hi")
+    assert (await agent.run_user_message("I'm Riley. I like chess, synths, and web design.")).content.startswith("Nice")
 
     start_responses = []
     for index in range(4):
-        response = await agent.run(f"Build complex website {index + 1} in the background.", "user-1", "chan")
+        response = await agent.run_user_message(f"Build complex website {index + 1} in the background.")
         start_responses.append(response.content)
     assert start_responses == [
         "Started website 1 in the background.",
@@ -483,7 +473,7 @@ async def test_end_to_end_onboarding_four_parallel_websites_and_midrun_question(
             FakeResponse(FinalMessage("That worker says the background is color-1.")),
         ]
     )
-    question_response = await agent.run("what color is the website background in that background job?", "user-1", "chan")
+    question_response = await agent.run_user_message("what color is the website background in that background job?")
     assert question_response.content == "That worker says the background is color-1."
     ask_calls = [
         call
@@ -514,7 +504,7 @@ def _agent(tmp_path: Path) -> CodingAgent:
             runtime_config_db_path=tmp_path / "runtime.sqlite3",
             self_improvement_db_path=tmp_path / "self.sqlite3",
             cron_db_path=tmp_path / "cron.sqlite3",
-            exec_audit_db_path=tmp_path / "exec.sqlite3",
+            shell_audit_db_path=tmp_path / "exec.sqlite3",
             background_tasks_db_path=tmp_path / "background.sqlite3",
             max_agent_steps=3,
         )

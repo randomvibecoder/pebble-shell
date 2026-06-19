@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from opencode_agent.discord_bot import _send_file
+from pebble_shell.discord_bot import _send_file
 
 
 class FakeClient:

@@ -22,20 +22,27 @@ async def run_discord_bot(settings: Settings, agent: CodingAgent | None = None) 
     intents.message_content = True
     client = discord.Client(intents=intents)
     agent = agent or CodingAgent(settings)
-    agent.set_deliver(lambda channel_id, text: _deliver(client, channel_id, text))
-    agent.tools.text_sender = lambda channel_id, text: _send_text_sync(client, channel_id, text)
-    agent.tools.file_sender = lambda channel_id, path: _send_file_sync(client, channel_id, path)
-    agent.background_tasks.set_deliver(lambda channel_id, text: _deliver(client, channel_id, text))
-    heartbeat = HeartbeatRunner(agent, settings, deliver=lambda channel_id, text: _deliver(client, channel_id, text))
+    delivery_channel_id: str | None = None
+
+    def current_channel_id() -> str:
+        if not delivery_channel_id:
+            raise RuntimeError("No Discord delivery channel is available yet")
+        return delivery_channel_id
+
+    agent.set_deliver(lambda text: _deliver(client, current_channel_id(), text))
+    agent.tools.text_sender = lambda text: _send_text_sync(client, current_channel_id(), text)
+    agent.tools.file_sender = lambda path: _send_file_sync(client, current_channel_id(), path)
+    heartbeat = HeartbeatRunner(agent, settings)
 
     @client.event
     async def on_ready() -> None:
         LOGGER.info("Discord bot connected as %s", client.user)
-        if not hasattr(client, "_opencode_heartbeat_task"):
-            client._opencode_heartbeat_task = client.loop.create_task(heartbeat.serve())  # type: ignore[attr-defined]
+        if not hasattr(client, "_pebble_heartbeat_task"):
+            client._pebble_heartbeat_task = client.loop.create_task(heartbeat.serve())  # type: ignore[attr-defined]
 
     @client.event
     async def on_message(message: discord.Message) -> None:
+        nonlocal delivery_channel_id
         if message.author.bot:
             return
         allowed_user_id = settings.discord_allowed_user_id.strip()
@@ -48,8 +55,9 @@ async def run_discord_bot(settings: Settings, agent: CodingAgent | None = None) 
         content = message.content
         if client.user:
             content = content.replace(client.user.mention, "").strip()
+        delivery_channel_id = str(message.channel.id)
         if content.strip() == "/dump_context":
-            path = agent.dump_next_heartbeat_context(str(message.channel.id))
+            path = agent.dump_next_heartbeat_context()
             relative = path.relative_to(settings.agent_workspace)
             await message.reply(f"dumped next heartbeat context to `{relative}`", mention_author=False)
             return
@@ -75,7 +83,7 @@ async def run_discord_bot(settings: Settings, agent: CodingAgent | None = None) 
         if await agent.enqueue_user_message(content, saved.images):
             return
         async with message.channel.typing():
-            response = await agent.run_user_message(content, saved.images, delivery_route=str(message.channel.id))
+            response = await agent.run_user_message(content, saved.images)
         chunks = split_discord_content(response.content)
         await message.reply(chunks[0], mention_author=False)
         for chunk in chunks[1:]:

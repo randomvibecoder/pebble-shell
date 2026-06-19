@@ -162,7 +162,7 @@ class SkillLoader:
         return paths
 
     def _disabled_marker(self, name: str) -> Path:
-        return self.workspace / ".opencode_agent" / "disabled_skills" / f"{name}.disabled"
+        return self.workspace / ".pebble_shell" / "disabled_skills" / f"{name}.disabled"
 
     def _is_disabled(self, name: str) -> bool:
         return self._disabled_marker(name).is_file()

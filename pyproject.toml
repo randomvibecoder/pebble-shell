@@ -1,5 +1,5 @@
 [project]
-name = "opencode-agent"
+name = "pebble-shell"
 version = "0.0.1"
 description = "Docker-isolated Discord-compatible coding agent with OpenAI-compatible model support."
 requires-python = ">=3.11"
@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.scripts]
-opencode-agent-discord-register = "opencode_agent.discord_register:main"
-opencode-agent-discord-dm = "opencode_agent.discord_dm:main"
+pebble-shell-discord-register = "pebble_shell.discord_register:main"
+pebble-shell-discord-dm = "pebble_shell.discord_dm:main"
 
 [project.optional-dependencies]
 dev = [

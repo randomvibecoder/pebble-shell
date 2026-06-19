@@ -3,9 +3,9 @@ from pathlib import Path
 import json
 import pytest
 
-from opencode_agent.self_improvement import SelfImprovementStore
-from opencode_agent.skills import SkillLoader
-from opencode_agent.tools import CURRENT_CHANNEL_ID, WorkspaceTools
+from pebble_shell.self_improvement import SelfImprovementStore
+from pebble_shell.skills import SkillLoader
+from pebble_shell.tools import WorkspaceTools
 
 
 def test_skill_save_creates_loadable_skill(tmp_path: Path) -> None:
@@ -113,23 +113,19 @@ def test_webhook_hook_save_registers_hook(tmp_path: Path) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
     tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, self_improvement=store)
 
-    token = CURRENT_CHANNEL_ID.set("local-channel")
-    try:
-        result = tools.webhook_hook_save("email", "Summarize inbound email payloads.")
-    finally:
-        CURRENT_CHANNEL_ID.reset(token)
+    result = tools.webhook_hook_save("email", "Summarize inbound email payloads.")
 
     assert result.ok
     hook = store.get_hook("email")
     assert hook is not None
     assert hook["prompt"] == "Summarize inbound email payloads."
-    assert hook["channel_id"] == "local-channel"
+    assert "channel_id" not in hook
 
 
 def test_webhook_events_are_visible_to_agent_tools(tmp_path: Path) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
     tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, self_improvement=store)
-    store.upsert_hook("suggestion-box", "Summarize suggestions.", "local-channel")
+    store.upsert_hook("suggestion-box", "Summarize suggestions.")
     event_id = store.record_webhook_event("suggestion-box", {"suggestion": "Add dark mode."}, background=True)
     store.mark_webhook_event_completed(event_id, "Summarized dark mode request.")
 
@@ -148,4 +144,4 @@ def test_webhook_hook_rejects_unsafe_names(tmp_path: Path) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
 
     with pytest.raises(ValueError):
-        store.upsert_hook("../email", "prompt", "channel")
+        store.upsert_hook("../email", "prompt")

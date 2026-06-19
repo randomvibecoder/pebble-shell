@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from opencode_agent.agent import CodingAgent
-from opencode_agent.config import Settings
+from pebble_shell.agent import CodingAgent
+from pebble_shell.config import Settings
 
 
 class FakeCompletions:
@@ -55,7 +55,7 @@ def _agent(tmp_path: Path, **overrides) -> CodingAgent:
         runtime_config_db_path=tmp_path / "runtime.sqlite3",
         self_improvement_db_path=tmp_path / "self.sqlite3",
         cron_db_path=tmp_path / "cron.sqlite3",
-        exec_audit_db_path=tmp_path / "exec.sqlite3",
+        shell_audit_db_path=tmp_path / "exec.sqlite3",
         background_tasks_db_path=tmp_path / "background.sqlite3",
         **overrides,
     )

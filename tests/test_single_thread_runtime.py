@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from opencode_agent.agent import CodingAgent
-from opencode_agent.config import Settings
-from opencode_agent.tools import ToolResult
+from pebble_shell.agent import CodingAgent
+from pebble_shell.config import Settings
+from pebble_shell.tools import ToolResult
 
 
 class FakeMessage:
@@ -83,8 +83,8 @@ async def test_agent_runs_are_serialized(tmp_path: Path) -> None:
     agent.client = fake_client  # type: ignore[assignment]
 
     responses = await asyncio.gather(
-        agent.run("first", "user-1", "chan"),
-        agent.run("second", "user-2", "chan"),
+        agent.run_user_message("first"),
+        agent.run_user_message("second"),
     )
 
     assert [response.content for response in responses] == ["ok", "ok"]
@@ -101,8 +101,8 @@ async def test_separate_agent_instances_share_run_lock(tmp_path: Path) -> None:
     second_agent.client = fake_client  # type: ignore[assignment]
 
     responses = await asyncio.gather(
-        first_agent.run("first", "user-1", "chan"),
-        second_agent.run("second", "user-2", "chan"),
+        first_agent.run_user_message("first"),
+        second_agent.run_user_message("second"),
     )
 
     assert [response.content for response in responses] == ["ok", "ok"]
@@ -121,10 +121,10 @@ async def test_same_channel_message_is_injected_before_next_model_step(tmp_path:
         return ToolResult(ok=True, output="tool done")
 
     agent.tools.run = slow_tool  # type: ignore[method-assign]
-    run_task = asyncio.create_task(agent.run("first task", "user-1", "chan"))
+    run_task = asyncio.create_task(agent.run_user_message("first task"))
     await fake_client.chat.completions.first_call_seen.wait()
 
-    queued = await agent.enqueue_if_running("second message", "user-2", "chan")
+    queued = await agent.enqueue_user_message("second message")
     response = await run_task
 
     assert queued is True
@@ -134,7 +134,7 @@ async def test_same_channel_message_is_injected_before_next_model_step(tmp_path:
     user_messages = [message["content"] for message in second_call_messages if message["role"] == "user"]
     assert any("first task" in str(content) for content in user_messages)
     assert any("second message" in str(content) for content in user_messages)
-    context = agent.memory.get_context("chan", "second", recent_limit=10)
+    context = agent.memory.get_context("second", recent_limit=10)
     assert [role for role, _ in context.recent_messages] == ["user", "assistant", "tool", "user", "assistant"]
     assert any(message.get("role") == "assistant" and message.get("tool_calls") for message in context.recent_raw_messages)
     assert any(message.get("role") == "tool" and "tool done" in str(message.get("content")) for message in context.recent_raw_messages)
@@ -149,7 +149,7 @@ def _agent(tmp_path: Path) -> CodingAgent:
             runtime_config_db_path=tmp_path / "runtime.sqlite3",
             self_improvement_db_path=tmp_path / "self.sqlite3",
             cron_db_path=tmp_path / "cron.sqlite3",
-            exec_audit_db_path=tmp_path / "exec.sqlite3",
+            shell_audit_db_path=tmp_path / "exec.sqlite3",
             background_tasks_db_path=tmp_path / "background.sqlite3",
         )
     )

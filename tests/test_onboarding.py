@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from opencode_agent.agent import CodingAgent
-from opencode_agent.agent import ImageInput
-from opencode_agent.config import Settings
+from pebble_shell.agent import CodingAgent
+from pebble_shell.agent import ImageInput
+from pebble_shell.config import Settings
 
 
 class FakeMessage:
@@ -115,7 +115,7 @@ async def test_first_contact_onboarding_prompt_is_included(tmp_path: Path) -> No
     fake_client = FakeClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run("hello", "user-1", "new-channel")
+    await agent.run_user_message("hello")
 
     system_messages = [message["content"] for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system"]
     assert any("First-contact onboarding: this chat has no prior conversation memory" in str(message) for message in system_messages)
@@ -128,7 +128,7 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
     fake_client = FakeClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run("hello", "user-1", "new-channel")
+    await agent.run_user_message("hello")
 
     core_prompt = fake_client.chat.completions.calls[0]["messages"][0]["content"]
     assert "one foreground supervisor and up to four long-running background workers" in core_prompt
@@ -142,11 +142,11 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
 @pytest.mark.asyncio
 async def test_first_contact_onboarding_prompt_is_suppressed_when_memory_exists(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    agent.memory.add_message("known-channel", "user", "previous hello")
+    agent.memory.add_message("user", "previous hello")
     fake_client = FakeClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run("hello again", "user-1", "known-channel")
+    await agent.run_user_message("hello again")
 
     system_messages = [message["content"] for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system"]
     assert any("First-contact onboarding: not needed" in str(message) for message in system_messages)
@@ -156,11 +156,11 @@ async def test_first_contact_onboarding_prompt_is_suppressed_when_memory_exists(
 @pytest.mark.asyncio
 async def test_recent_memory_is_sent_as_native_roles_not_system_transcript(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    agent.memory.add_message("known-channel", "assistant", "what do you need?\nuser: install ffmpeg")
+    agent.memory.add_message("assistant", "what do you need?\nuser: install ffmpeg")
     fake_client = FakeClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run("why did you complete my turn?", "user-1", "known-channel")
+    await agent.run_user_message("why did you complete my turn?")
 
     messages = fake_client.chat.completions.calls[0]["messages"]
     assert {"role": "assistant", "content": "what do you need?\nuser: install ffmpeg"} in messages
@@ -172,10 +172,10 @@ async def test_recent_memory_is_sent_as_native_roles_not_system_transcript(tmp_p
 def test_dump_next_heartbeat_context_writes_exact_chat_completion_kwargs(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     (agent.settings.agent_workspace / "HEARTBEAT.md").write_text("SECRET HEARTBEAT BODY", encoding="utf-8")
-    agent.memory.add_message("primary", "user", "hello")
-    agent.memory.add_message("primary", "assistant", "hi")
+    agent.memory.add_message("user", "hello")
+    agent.memory.add_message("assistant", "hi")
 
-    path = agent.dump_next_heartbeat_context("chan")
+    path = agent.dump_next_heartbeat_context()
 
     assert path.name.startswith("heartbeat_")
     payload = __import__("json").loads(path.read_text(encoding="utf-8"))["payload"]
@@ -199,9 +199,9 @@ async def test_memory_md_is_cached_until_compaction_or_restart(tmp_path: Path) -
     fake_client = FakeClient()
     restarted.client = fake_client  # type: ignore[assignment]
 
-    await restarted.run("hello", "user-1", "chan")
+    await restarted.run_user_message("hello")
     memory_path.write_text("changed memory", encoding="utf-8")
-    await restarted.run("hello again", "user-1", "chan")
+    await restarted.run_user_message("hello again")
 
     first_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system")
     second_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[1]["messages"] if message["role"] == "system")
@@ -220,9 +220,9 @@ async def test_context_files_are_cached_until_compaction_or_restart(tmp_path: Pa
     fake_client = FakeClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run("hello", "user-1", "chan")
+    await agent.run_user_message("hello")
     tools_path.write_text("changed tools", encoding="utf-8")
-    await agent.run("hello again", "user-1", "chan")
+    await agent.run_user_message("hello again")
 
     first_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system")
     second_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[1]["messages"] if message["role"] == "system")
@@ -240,9 +240,9 @@ async def test_memory_md_refreshes_after_context_compaction(tmp_path: Path) -> N
     memory_path = agent.settings.agent_workspace / "MEMORY.md"
     memory_path.write_text("initial memory", encoding="utf-8")
     restarted = _agent(tmp_path)
-    restarted.memory.add_message("chan", "user", "old one")
-    restarted.memory.add_message("chan", "assistant", "old two")
-    restarted.memory.add_message("chan", "user", "old three")
+    restarted.memory.add_message("user", "old one")
+    restarted.memory.add_message("assistant", "old two")
+    restarted.memory.add_message("user", "old three")
     memory_path.write_text("changed memory", encoding="utf-8")
     error = BadRequestError("context length exceeded", response=httpx.Response(400, request=httpx.Request("POST", "https://example.test")), body={})
     fake_client = SequencedClient()
@@ -253,7 +253,7 @@ async def test_memory_md_refreshes_after_context_compaction(tmp_path: Path) -> N
     ]
     restarted.client = fake_client  # type: ignore[assignment]
 
-    response = await restarted.run("force compaction", "user-1", "chan")
+    response = await restarted.run_user_message("force compaction")
 
     assert response.content == "done after compaction"
     retry_messages = fake_client.chat.completions.calls[-1]["messages"]
@@ -272,9 +272,9 @@ async def test_context_files_refresh_after_context_compaction(tmp_path: Path) ->
     tools_path = workspace / "TOOLS.md"
     tools_path.write_text("initial tools", encoding="utf-8")
     agent = _agent(tmp_path)
-    agent.memory.add_message("chan", "user", "old one")
-    agent.memory.add_message("chan", "assistant", "old two")
-    agent.memory.add_message("chan", "user", "old three")
+    agent.memory.add_message("user", "old one")
+    agent.memory.add_message("assistant", "old two")
+    agent.memory.add_message("user", "old three")
     tools_path.write_text("changed tools", encoding="utf-8")
     error = BadRequestError("context length exceeded", response=httpx.Response(400, request=httpx.Request("POST", "https://example.test")), body={})
     fake_client = SequencedClient()
@@ -285,7 +285,7 @@ async def test_context_files_refresh_after_context_compaction(tmp_path: Path) ->
     ]
     agent.client = fake_client  # type: ignore[assignment]
 
-    response = await agent.run("force compaction", "user-1", "chan")
+    response = await agent.run_user_message("force compaction")
 
     assert response.content == "done after compaction"
     retry_messages = fake_client.chat.completions.calls[-1]["messages"]
@@ -300,11 +300,9 @@ async def test_image_inputs_are_sent_as_multimodal_content_and_stored_as_referen
     fake_client = FakeClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run(
+    await agent.run_user_message(
         "what is in this image?",
-        "user-1",
-        "image-channel",
-        [ImageInput(url="https://cdn.discordapp.com/attachments/1/cat.png", content_type="image/png", filename="cat.png")],
+        images=[ImageInput(url="https://cdn.discordapp.com/attachments/1/cat.png", content_type="image/png", filename="cat.png")],
     )
 
     user_message = next(message for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "user")
@@ -315,7 +313,7 @@ async def test_image_inputs_are_sent_as_multimodal_content_and_stored_as_referen
         "type": "image_url",
         "image_url": {"url": "https://cdn.discordapp.com/attachments/1/cat.png"},
     }
-    context = agent.memory.get_context("image-channel", "image", recent_limit=5)
+    context = agent.memory.get_context("image", recent_limit=5)
     assert "Attached images:" in context.recent_messages[0][1]
     assert "https://cdn.discordapp.com/attachments/1/cat.png" in context.recent_messages[0][1]
     assert context.recent_raw_messages[0]["content"][1] == {
@@ -327,7 +325,7 @@ async def test_image_inputs_are_sent_as_multimodal_content_and_stored_as_referen
 def test_user_prompt_does_not_include_discord_identity_wrapper(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
 
-    payload = agent.build_chat_completion_payload("hello", "111111111111111111", "999999999999999999")
+    payload = agent.build_chat_completion_payload("hello")
     user_content = payload["messages"][-1]["content"]
     system_content = payload["messages"][0]["content"]
 
@@ -348,11 +346,9 @@ async def test_image_url_is_preserved_across_tool_iterations_and_future_turns(tm
     ]
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run(
+    await agent.run_user_message(
         "inspect this image then list files",
-        "user-1",
-        "image-channel",
-        [ImageInput(url="https://cdn.discordapp.com/attachments/1/cat.png", content_type="image/png", filename="cat.png")],
+        images=[ImageInput(url="https://cdn.discordapp.com/attachments/1/cat.png", content_type="image/png", filename="cat.png")],
     )
 
     first_user = next(message for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "user")
@@ -362,7 +358,7 @@ async def test_image_url_is_preserved_across_tool_iterations_and_future_turns(tm
     assert isinstance(second_user["content"], list)
     assert second_user["content"][1]["type"] == "image_url"
 
-    response = await agent.run("can you still see the previous image?", "user-1", "image-channel")
+    response = await agent.run_user_message("can you still see the previous image?")
 
     assert response.content == "prior image is still visible"
     third_call_messages = fake_client.chat.completions.calls[2]["messages"]
@@ -387,7 +383,7 @@ async def test_max_tool_steps_gets_final_no_tool_turn(tmp_path: Path) -> None:
             runtime_config_db_path=tmp_path / "runtime.sqlite3",
             self_improvement_db_path=tmp_path / "self.sqlite3",
             cron_db_path=tmp_path / "cron.sqlite3",
-            exec_audit_db_path=tmp_path / "exec.sqlite3",
+            shell_audit_db_path=tmp_path / "exec.sqlite3",
             background_tasks_db_path=tmp_path / "background.sqlite3",
             max_agent_steps=2,
         )
@@ -395,7 +391,7 @@ async def test_max_tool_steps_gets_final_no_tool_turn(tmp_path: Path) -> None:
     fake_client = MaxStepsClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    response = await agent.run("keep checking files", "user-1", "chan")
+    response = await agent.run_user_message("keep checking files")
 
     assert response.content == "tool budget exhausted summary"
     assert response.steps == 3
@@ -412,7 +408,7 @@ async def test_empty_final_gets_no_tool_recovery_turn(tmp_path: Path) -> None:
     fake_client = EmptyThenRecoveryClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    response = await agent.run("hello?", "user-1", "chan")
+    response = await agent.run_user_message("hello?")
 
     assert response.content == "Recovered useful reply"
     calls = fake_client.chat.completions.calls
@@ -420,7 +416,7 @@ async def test_empty_final_gets_no_tool_recovery_turn(tmp_path: Path) -> None:
     assert calls[-1]["tool_choice"] == "none"
     final_system_text = "\n".join(str(message["content"]) for message in calls[-1]["messages"] if message["role"] == "system")
     assert "previous assistant response was empty" in final_system_text
-    context = agent.memory.get_context("chan", "hello", recent_limit=5)
+    context = agent.memory.get_context("hello", recent_limit=5)
     assert ("assistant", "Recovered useful reply") in context.recent_messages
     assert ("assistant", "") not in context.recent_messages
 
@@ -431,11 +427,11 @@ async def test_empty_final_recovery_falls_back_to_visible_message(tmp_path: Path
     fake_client = EmptyThenEmptyClient()
     agent.client = fake_client  # type: ignore[assignment]
 
-    response = await agent.run("hello?", "user-1", "chan")
+    response = await agent.run_user_message("hello?")
 
     assert response.content.startswith("I got an empty model response")
     assert len(fake_client.chat.completions.calls) == 2
-    context = agent.memory.get_context("chan", "hello", recent_limit=5)
+    context = agent.memory.get_context("hello", recent_limit=5)
     assert any(role == "assistant" and content.startswith("I got an empty model response") for role, content in context.recent_messages)
 
 
@@ -451,7 +447,7 @@ async def test_heartbeat_forces_read_file_before_final_answer(tmp_path: Path) ->
     ]
     agent.client = fake_client  # type: ignore[assignment]
 
-    response = await agent.run_heartbeat("chan")
+    response = await agent.run_heartbeat()
 
     assert response.content == "HEARTBEAT_OK"
     assert response.should_notify is False
@@ -470,8 +466,8 @@ async def test_heartbeat_forces_read_file_before_final_answer(tmp_path: Path) ->
 @pytest.mark.asyncio
 async def test_send_msg_sends_progress_and_final_response_still_uses_normal_reply(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    delivered: list[tuple[str, str]] = []
-    agent.tools.text_sender = lambda channel_id, text: delivered.append((channel_id, text)) or "sent progress"
+    delivered: list[str] = []
+    agent.tools.text_sender = lambda text: delivered.append(text) or "sent progress"
     fake_client = SequencedClient()
     fake_client.chat.completions.responses = [
         _tool_call_response_named("send_msg", {"msg": "I started the verification run."}),
@@ -479,11 +475,11 @@ async def test_send_msg_sends_progress_and_final_response_still_uses_normal_repl
     ]
     agent.client = fake_client  # type: ignore[assignment]
 
-    response = await agent.run("do a long task", "user-1", "chan")
+    response = await agent.run_user_message("do a long task")
 
-    assert delivered == [("chan", "I started the verification run.")]
+    assert delivered == ["I started the verification run."]
     assert response.content == "Final result is ready."
-    context = agent.memory.get_context("chan", "long task", recent_limit=5)
+    context = agent.memory.get_context("long task", recent_limit=5)
     assert ("assistant", "Final result is ready.") in context.recent_messages
     assert any(message.get("role") == "assistant" and message.get("tool_calls") for message in context.recent_raw_messages)
     assert any(
@@ -495,7 +491,7 @@ async def test_send_msg_sends_progress_and_final_response_still_uses_normal_repl
 @pytest.mark.asyncio
 async def test_foreground_tool_calls_are_preserved_in_next_turn_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    agent.tools.text_sender = lambda channel_id, text: "sent progress"
+    agent.tools.text_sender = lambda text: "sent progress"
     fake_client = SequencedClient()
     fake_client.chat.completions.responses = [
         _tool_call_response_named("send_msg", {"msg": "I started the verification run."}),
@@ -504,8 +500,8 @@ async def test_foreground_tool_calls_are_preserved_in_next_turn_context(tmp_path
     ]
     agent.client = fake_client  # type: ignore[assignment]
 
-    await agent.run("do a long task", "user-1", "chan")
-    response = await agent.run("what was the prior tool result?", "user-1", "chan")
+    await agent.run_user_message("do a long task")
+    response = await agent.run_user_message("what was the prior tool result?")
 
     assert response.content == "The prior tool result is visible."
     second_turn_messages = fake_client.chat.completions.calls[2]["messages"]
@@ -524,7 +520,7 @@ def _agent(tmp_path: Path) -> CodingAgent:
             runtime_config_db_path=tmp_path / "runtime.sqlite3",
             self_improvement_db_path=tmp_path / "self.sqlite3",
             cron_db_path=tmp_path / "cron.sqlite3",
-            exec_audit_db_path=tmp_path / "exec.sqlite3",
+            shell_audit_db_path=tmp_path / "exec.sqlite3",
             background_tasks_db_path=tmp_path / "background.sqlite3",
         )
     )

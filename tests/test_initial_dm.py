@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-import opencode_agent.__main__ as main_module
-from opencode_agent.__main__ import _send_initial_dm_once
-from opencode_agent.agent import CodingAgent
-from opencode_agent.config import Settings
+import pebble_shell.__main__ as main_module
+from pebble_shell.__main__ import _send_initial_dm_once
+from pebble_shell.agent import CodingAgent
+from pebble_shell.config import Settings
 
 
 @pytest.mark.asyncio
@@ -24,9 +24,9 @@ async def test_initial_dm_sends_once_and_records_context(tmp_path: Path, monkeyp
     await _send_initial_dm_once(settings, agent)
 
     assert sent == [("bot-token", "111111111111111111", "Hi, I'm Pebble Shell. What's your name?")]
-    context = agent.memory.get_context("primary", "name", recent_limit=5)
+    context = agent.memory.get_context("name", recent_limit=5)
     assert context.recent_messages == [("assistant", "Hi, I'm Pebble Shell. What's your name?")]
-    assert agent.memory.get_last_contact() == "dm-channel"
+    assert agent.memory.get_contact("initial_dm_sent:111111111111111111:Hi, I'm Pebble Shell. What's your name?") == "sent"
 
 
 @pytest.mark.asyncio
@@ -57,6 +57,6 @@ def _settings(tmp_path: Path, initial_dm_user_id: str = "") -> Settings:
         runtime_config_db_path=tmp_path / "runtime.sqlite3",
         self_improvement_db_path=tmp_path / "self.sqlite3",
         cron_db_path=tmp_path / "cron.sqlite3",
-        exec_audit_db_path=tmp_path / "exec.sqlite3",
+        shell_audit_db_path=tmp_path / "exec.sqlite3",
         background_tasks_db_path=tmp_path / "background.sqlite3",
     )

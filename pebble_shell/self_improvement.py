@@ -40,43 +40,40 @@ class SelfImprovementStore:
             for row in rows
         ]
 
-    def upsert_hook(self, name: str, prompt: str, channel_id: str) -> None:
+    def upsert_hook(self, name: str, prompt: str) -> None:
         _validate_name(name)
         if not prompt.strip():
             raise ValueError("hook prompt cannot be empty")
-        if not channel_id.strip():
-            raise ValueError("hook channel_id cannot be empty")
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into webhook_hooks(name, prompt, channel_id)
-                values (?, ?, ?)
+                insert into webhook_hooks(name, prompt)
+                values (?, ?)
                 on conflict(name) do update set
                     prompt = excluded.prompt,
-                    channel_id = excluded.channel_id,
                     enabled = 1,
                     updated_at = current_timestamp
                 """,
-                (name, prompt.strip(), channel_id.strip()),
+                (name, prompt.strip()),
             )
 
     def get_hook(self, name: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
-                "select name, prompt, channel_id, enabled from webhook_hooks where name = ?",
+                "select name, prompt, enabled from webhook_hooks where name = ?",
                 (name,),
             ).fetchone()
         if not row:
             return None
-        return {"name": row[0], "prompt": row[1], "channel_id": row[2], "enabled": bool(row[3])}
+        return {"name": row[0], "prompt": row[1], "enabled": bool(row[2])}
 
     def list_hooks(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "select name, prompt, channel_id, enabled, updated_at from webhook_hooks order by name",
+                "select name, prompt, enabled, updated_at from webhook_hooks order by name",
             ).fetchall()
         return [
-            {"name": row[0], "prompt": row[1], "channel_id": row[2], "enabled": bool(row[3]), "updated_at": row[4]}
+            {"name": row[0], "prompt": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
             for row in rows
         ]
 
@@ -163,7 +160,6 @@ class SelfImprovementStore:
                 create table if not exists webhook_hooks (
                     name text primary key,
                     prompt text not null,
-                    channel_id text not null,
                     enabled integer not null default 1,
                     updated_at text not null default current_timestamp
                 );

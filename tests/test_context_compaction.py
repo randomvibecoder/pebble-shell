@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from opencode_agent.agent import CodingAgent
-from opencode_agent.config import Settings
+from pebble_shell.agent import CodingAgent
+from pebble_shell.config import Settings
 
 
 class FakeChoice:
@@ -87,10 +87,10 @@ class FakeClient:
 @pytest.mark.asyncio
 async def test_foreground_summarizes_only_after_context_length_error(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    delivered: list[tuple[str, str]] = []
+    delivered: list[str] = []
 
-    async def deliver(channel_id: str, text: str) -> None:
-        delivered.append((channel_id, text))
+    async def deliver(text: str) -> None:
+        delivered.append(text)
 
     agent.set_deliver(deliver)
     agent.client = FakeClient(
@@ -102,12 +102,11 @@ async def test_foreground_summarizes_only_after_context_length_error(tmp_path: P
         ]
     )  # type: ignore[assignment]
 
-    response = await agent.run("inspect the workspace", "user-1", "chan")
+    response = await agent.run_user_message("inspect the workspace")
 
     assert response.content == "Done after compaction."
     assert len(delivered) == 1
-    assert delivered[0][0] == "chan"
-    _assert_summary_notice(delivered[0][1], "foreground")
+    _assert_summary_notice(delivered[0])
     calls = agent.client.chat.completions.calls  # type: ignore[attr-defined]
     assert calls[2]["tool_choice"] == "none"
     retry_messages = calls[3]["messages"]
@@ -118,13 +117,13 @@ async def test_foreground_summarizes_only_after_context_length_error(tmp_path: P
 @pytest.mark.asyncio
 async def test_background_worker_persists_summary_and_notifies_after_context_error(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    delivered: list[tuple[str, str]] = []
+    delivered: list[str] = []
 
-    async def deliver(channel_id: str, text: str) -> None:
-        delivered.append((channel_id, text))
+    async def deliver(text: str) -> None:
+        delivered.append(text)
 
     agent.set_deliver(deliver)
-    job = agent.background_store.create_job("make a page", "page", "user-1", "chan", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
     (agent.settings.agent_workspace / job.folder).mkdir(parents=True)
     agent.client = FakeClient(
         [
@@ -139,8 +138,7 @@ async def test_background_worker_persists_summary_and_notifies_after_context_err
 
     assert response.content == "Background job done after compaction."
     assert len(delivered) == 1
-    assert delivered[0][0] == "chan"
-    _assert_summary_notice(delivered[0][1], f"agent_{job.id}")
+    _assert_summary_notice(delivered[0])
     assert "compacted background job" in agent.background_store.get_summary(job.id)
     context = agent.background_store.get_context(job.id)
     assert any("Background job compacted summary" in str(message.get("content")) for message in context)
@@ -156,15 +154,12 @@ def _agent(tmp_path: Path) -> CodingAgent:
             runtime_config_db_path=tmp_path / "runtime.sqlite3",
             self_improvement_db_path=tmp_path / "self.sqlite3",
             cron_db_path=tmp_path / "cron.sqlite3",
-            exec_audit_db_path=tmp_path / "exec.sqlite3",
+            shell_audit_db_path=tmp_path / "exec.sqlite3",
             background_tasks_db_path=tmp_path / "background.sqlite3",
             max_agent_steps=3,
         )
     )
 
 
-def _assert_summary_notice(text: str, label: str) -> None:
-    match = re.fullmatch(rf"\[{re.escape(label)}, summarized (\d+) tokens to (\d+) tokens\]", text)
-    assert match is not None
-    assert int(match.group(1)) > 0
-    assert int(match.group(2)) > 0
+def _assert_summary_notice(text: str) -> None:
+    assert text == "[compacted]"

@@ -1,27 +1,13 @@
-from opencode_agent.schemas import DiscordGatewayPayload
 from fastapi.testclient import TestClient
 
-from opencode_agent.server import _extract_message, app, get_agent, get_settings, set_agent
+from pebble_shell.schemas import ChatRequest
+from pebble_shell.server import app, get_agent, get_settings, set_agent
 
 
-def test_extracts_discord_gateway_message() -> None:
-    payload = DiscordGatewayPayload.model_validate(
-        {
-            "t": "MESSAGE_CREATE",
-            "d": {
-                "id": "42",
-                "channel_id": "abc",
-                "author": {"id": "user-1", "username": "tester"},
-                "content": "hello",
-            },
-        }
-    )
+def test_chat_request_is_transport_neutral() -> None:
+    payload = ChatRequest.model_validate({"content": "hello"})
 
-    message = _extract_message(payload)
-
-    assert message.channel_id == "abc"
-    assert message.author.id == "user-1"
-    assert message.content == "hello"
+    assert payload.content == "hello"
 
 
 def test_public_route_serves_workspace_public_files(tmp_path, monkeypatch) -> None:

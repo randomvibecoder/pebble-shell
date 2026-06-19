@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import opencode_agent.attachments as attachments_module
-from opencode_agent.attachments import append_attachment_lines, save_discord_attachments
+import pebble_shell.attachments as attachments_module
+from pebble_shell.attachments import append_attachment_lines, save_discord_attachments
 
 
 def test_save_discord_attachments_saves_pdf_and_image(monkeypatch, tmp_path) -> None:

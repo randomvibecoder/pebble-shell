@@ -1,6 +1,6 @@
-from opencode_agent.config import Settings
-import opencode_agent.discord_register as discord_register
-from opencode_agent.discord_register import _authorization, agent_command_payload, background_agents_command_payload, command_payloads, invite_url
+from pebble_shell.config import Settings
+import pebble_shell.discord_register as discord_register
+from pebble_shell.discord_register import _authorization, agent_command_payload, background_agents_command_payload, command_payloads, invite_url
 
 
 def test_agent_command_payload() -> None:

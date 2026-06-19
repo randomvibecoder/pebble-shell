@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     def __init__(self, **data: Any) -> None:
-        if os.environ.get("OPENCODE_AGENT_DISABLE_DOTENV") == "1" and "_env_file" not in data:
+        if os.environ.get("PEBBLE_SHELL_DISABLE_DOTENV") == "1" and "_env_file" not in data:
             data["_env_file"] = None
         super().__init__(**data)
 
@@ -39,12 +39,12 @@ class Settings(BaseSettings):
     log_level: str = "info"
 
     agent_workspace: Path = Path("/workspace")
-    memory_db_path: Path = Path("/workspace/.opencode_agent/memory.sqlite3")
-    runtime_config_db_path: Path = Path("/workspace/.opencode_agent/runtime_config.sqlite3")
-    self_improvement_db_path: Path = Path("/workspace/.opencode_agent/self_improvement.sqlite3")
-    cron_db_path: Path = Path("/workspace/.opencode_agent/cron.sqlite3")
-    exec_audit_db_path: Path = Path("/workspace/.opencode_agent/exec_audit.sqlite3")
-    background_tasks_db_path: Path = Path("/workspace/.opencode_agent/background_tasks.sqlite3")
+    memory_db_path: Path = Path("/workspace/.pebble_shell/memory.sqlite3")
+    runtime_config_db_path: Path = Path("/workspace/.pebble_shell/runtime_config.sqlite3")
+    self_improvement_db_path: Path = Path("/workspace/.pebble_shell/self_improvement.sqlite3")
+    cron_db_path: Path = Path("/workspace/.pebble_shell/cron.sqlite3")
+    shell_audit_db_path: Path = Path("/workspace/.pebble_shell/shell_audit.sqlite3")
+    background_tasks_db_path: Path = Path("/workspace/.pebble_shell/background_tasks.sqlite3")
     max_background_tasks: int = 4
     cron_poll_seconds: int = 15
     recent_message_limit: int = 1000

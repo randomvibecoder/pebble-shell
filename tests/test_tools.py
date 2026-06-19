@@ -3,8 +3,8 @@ from pathlib import Path
 import json
 import time
 
-from opencode_agent.memory import MemoryStore
-from opencode_agent.tools import CURRENT_CHANNEL_ID, CURRENT_USER_ID, WorkspaceTools
+from pebble_shell.memory import MemoryStore
+from pebble_shell.tools import WorkspaceTools
 
 
 def test_workspace_paths_cannot_escape(tmp_path: Path) -> None:
@@ -163,12 +163,12 @@ def test_publish_static_site_copies_directory_without_hidden_files(tmp_path: Pat
 
 
 def test_publish_static_site_rejects_hidden_source(tmp_path: Path) -> None:
-    hidden = tmp_path / ".opencode_agent"
+    hidden = tmp_path / ".pebble_shell"
     hidden.mkdir()
     (hidden / "secret.txt").write_text("secret", encoding="utf-8")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
 
-    result = tools.publish_static_site(".opencode_agent", "bad")
+    result = tools.publish_static_site(".pebble_shell", "bad")
 
     assert not result.ok
     assert "hidden" in result.output
@@ -177,47 +177,35 @@ def test_publish_static_site_rejects_hidden_source(tmp_path: Path) -> None:
 def test_send_file_to_user_uses_configured_file_sender(tmp_path: Path) -> None:
     sent = []
 
-    def sender(channel_id: str, path: Path) -> str:
-        sent.append((channel_id, path.name))
+    def sender(path: Path) -> str:
+        sent.append(path.name)
         return f"sent {path.name}"
 
     (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, file_sender=sender)
-    token = CURRENT_CHANNEL_ID.set("chan-1")
-    try:
-        result = tools.run("send_file_to_user", {"path": "report.pdf"})
-    finally:
-        CURRENT_CHANNEL_ID.reset(token)
+    result = tools.run("send_file_to_user", {"path": "report.pdf"})
 
     assert result.ok
     assert result.output == "sent report.pdf"
-    assert sent == [("chan-1", "report.pdf")]
+    assert sent == ["report.pdf"]
 
 
 def test_send_file_to_user_without_sender_reports_ready_path(tmp_path: Path) -> None:
     (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
-    token = CURRENT_CHANNEL_ID.set("chan-1")
-    try:
-        result = tools.run("send_file_to_user", {"path": "report.pdf"})
-    finally:
-        CURRENT_CHANNEL_ID.reset(token)
+    result = tools.run("send_file_to_user", {"path": "report.pdf"})
 
     assert result.ok
     assert "File ready at report.pdf" in result.output
 
 
 def test_send_file_to_user_reports_discord_sender_failure_with_path(tmp_path: Path) -> None:
-    def sender(channel_id: str, path: Path) -> str:
+    def sender(path: Path) -> str:
         raise RuntimeError("discord gateway unavailable")
 
     (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, file_sender=sender)
-    token = CURRENT_CHANNEL_ID.set("chan-1")
-    try:
-        result = tools.run("send_file_to_user", {"path": "report.pdf"})
-    finally:
-        CURRENT_CHANNEL_ID.reset(token)
+    result = tools.run("send_file_to_user", {"path": "report.pdf"})
 
     assert not result.ok
     assert "File send failed for report.pdf" in result.output
@@ -227,11 +215,7 @@ def test_send_file_to_user_reports_discord_sender_failure_with_path(tmp_path: Pa
 def test_send_file_to_user_rejects_oversized_file(tmp_path: Path) -> None:
     (tmp_path / "large.pdf").write_bytes(b"x" * 11)
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, max_send_file_bytes=10)
-    token = CURRENT_CHANNEL_ID.set("chan-1")
-    try:
-        result = tools.run("send_file_to_user", {"path": "large.pdf"})
-    finally:
-        CURRENT_CHANNEL_ID.reset(token)
+    result = tools.run("send_file_to_user", {"path": "large.pdf"})
 
     assert not result.ok
     assert "exceeds 10 bytes" in result.output
@@ -240,36 +224,20 @@ def test_send_file_to_user_rejects_oversized_file(tmp_path: Path) -> None:
 def test_send_msg_uses_configured_text_sender(tmp_path: Path) -> None:
     sent = []
 
-    def sender(channel_id: str, text: str) -> str:
-        sent.append((channel_id, text))
+    def sender(text: str) -> str:
+        sent.append(text)
         return "sent progress"
 
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, text_sender=sender)
-    channel_token = CURRENT_CHANNEL_ID.set("chan-1")
-    user_token = CURRENT_USER_ID.set("user-1")
-    try:
-        result = tools.run("send_msg", {"msg": "I started the browser verification."})
-    finally:
-        CURRENT_USER_ID.reset(user_token)
-        CURRENT_CHANNEL_ID.reset(channel_token)
+    result = tools.run("send_msg", {"msg": "I started the browser verification."})
 
     assert result.ok
     assert result.output == "sent progress"
-    assert sent == [("chan-1", "I started the browser verification.")]
+    assert sent == ["I started the browser verification."]
 
 
-def test_send_msg_validates_length_and_background_caller(tmp_path: Path) -> None:
-    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, text_sender=lambda channel_id, text: "sent")
-    channel_token = CURRENT_CHANNEL_ID.set("chan-1")
-    user_token = CURRENT_USER_ID.set("background:bg_test")
-    try:
-        background_result = tools.run("send_msg", {"msg": "hello"})
-    finally:
-        CURRENT_USER_ID.reset(user_token)
-        CURRENT_CHANNEL_ID.reset(channel_token)
-
-    assert not background_result.ok
-    assert "foreground agent" in background_result.output
+def test_send_msg_validates_length(tmp_path: Path) -> None:
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, text_sender=lambda text: "sent")
 
     empty_result = tools.run("send_msg", {"msg": "   "})
     long_result = tools.run("send_msg", {"msg": "x" * 501})

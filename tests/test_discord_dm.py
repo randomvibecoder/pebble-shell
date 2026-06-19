@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from opencode_agent.discord_dm import main, send_dm
+from pebble_shell.discord_dm import main, send_dm
 
 
 def test_send_dm_requires_bot_token() -> None:

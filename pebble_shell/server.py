@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse
 
 from . import __version__
 from .agent import AgentResponse, CodingAgent, ImageInput
-from .attachments import append_attachment_lines, save_discord_attachments
 from .config import Settings
 from .cron import CronRunner
 from .discord_interactions import (
@@ -28,7 +27,7 @@ from .discord_interactions import (
 )
 from .heartbeat import HeartbeatRunner
 from .public_sites import list_public_sites
-from .schemas import ChatRequest, ChatResponse, CronEnableRequest, CronJobRequest, DiscordAttachment, DiscordGatewayPayload, DiscordMessage
+from .schemas import ChatRequest, ChatResponse, CronEnableRequest, CronJobRequest
 
 app = FastAPI(title="Pebble Shell", version=__version__)
 app.add_middleware(
@@ -104,7 +103,6 @@ async def status(request: Request) -> dict[str, Any]:
         "heartbeat": {
             "every_seconds": int(heartbeat_every_seconds),
             "ack_max_chars": settings.heartbeat_ack_max_chars,
-            "last_delivery_route_configured": bool(agent.memory.get_last_contact()),
         },
         "discord": {
             "client_id": settings.discord_client_id,
@@ -140,49 +138,7 @@ async def status(request: Request) -> dict[str, Any]:
 @app.post("/chat", response_model=ChatResponse)
 async def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
     _require_api_auth(request)
-    return await _run_user_message_or_500(chat_request.content, delivery_route=chat_request.channel_id)
-
-
-@app.post("/discord/message", response_model=ChatResponse)
-async def discord_message(payload: DiscordGatewayPayload | DiscordMessage, request: Request) -> ChatResponse:
-    _require_api_auth(request)
-    message = _extract_message(payload)
-    if message.author.bot:
-        return ChatResponse(content="Ignored bot-authored message.", steps=0)
-    _require_allowed_discord_user(message.author.id)
-    settings = get_settings()
-    if message.content.strip() == "/dump_context":
-        path = get_agent().dump_next_heartbeat_context(message.channel_id)
-        return ChatResponse(content=f"dumped next heartbeat context to {path.relative_to(settings.agent_workspace)}", steps=0)
-    if _is_background_agents_command(message.content):
-        return ChatResponse(content=await _background_agents_yaml(message.content), steps=0)
-    saved = await asyncio.to_thread(
-        save_discord_attachments,
-        message.attachments,
-        settings.agent_workspace,
-        settings.discord_attachments_dir,
-        message.channel_id,
-        message.id,
-        settings.max_discord_attachment_bytes,
-    )
-    return await _run_user_message_or_500(
-        append_attachment_lines(message.content, saved.lines),
-        delivery_route=message.channel_id,
-        images=saved.images,
-    )
-
-
-@app.post("/discord/interaction-test", response_model=ChatResponse)
-async def discord_interaction_test(payload: dict[str, Any], request: Request) -> ChatResponse:
-    _require_api_auth(request)
-    interaction_type = payload.get("type")
-    if interaction_type != APPLICATION_COMMAND:
-        raise HTTPException(status_code=400, detail=f"Unsupported interaction type: {interaction_type}")
-    message = interaction_to_message(payload)
-    _require_allowed_discord_user(message.user_id)
-    if _is_background_agents_command(message.content):
-        return ChatResponse(content=await _background_agents_yaml(message.content), steps=0)
-    return await _run_user_message_or_500(message.content, delivery_route=message.channel_id)
+    return await _run_user_message_or_500(chat_request.content)
 
 
 @app.post("/discord/interactions")
@@ -211,7 +167,7 @@ async def discord_interactions(request: Request, background_tasks: BackgroundTas
         raise HTTPException(status_code=400, detail=f"Unsupported interaction type: {interaction_type}")
 
     message = interaction_to_message(payload)
-    _require_allowed_discord_user(message.user_id)
+    _require_allowed_discord_user(message.author_id)
     interaction_token = str(payload.get("token") or "")
     if not interaction_token:
         raise HTTPException(status_code=400, detail="Discord interaction token is required")
@@ -224,7 +180,7 @@ async def _run_interaction_followup(message: InteractionMessage, interaction_tok
         if _is_background_agents_command(message.content):
             content = await _background_agents_yaml(message.content)
         else:
-            response = await _run_user_message_response(message.content, delivery_route=message.channel_id)
+            response = await _run_user_message_response(message.content)
             content = response.content
     except Exception as exc:
         content = f"Agent failed while handling the Discord interaction: {exc}"
@@ -233,11 +189,10 @@ async def _run_interaction_followup(message: InteractionMessage, interaction_tok
 
 async def _run_user_message_or_500(
     content: str,
-    delivery_route: str | None = None,
     images: list[ImageInput] | None = None,
 ) -> ChatResponse:
     try:
-        response = await _run_user_message_response(content, delivery_route, images)
+        response = await _run_user_message_response(content, images)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return ChatResponse(content=response.content, steps=response.steps)
@@ -245,15 +200,10 @@ async def _run_user_message_or_500(
 
 async def _run_user_message_response(
     content: str,
-    delivery_route: str | None = None,
     images: list[ImageInput] | None = None,
 ) -> AgentResponse:
     agent = get_agent()
-    if hasattr(agent, "run_user_message"):
-        return await agent.run_user_message(content, images=images, delivery_route=delivery_route)  # type: ignore[attr-defined]
-    if images:
-        return await agent.run(content, "human", delivery_route or "primary", images)  # type: ignore[attr-defined]
-    return await agent.run(content, "human", delivery_route or "primary")  # type: ignore[attr-defined]
+    return await agent.run_user_message(content, images=images)
 
 
 def _is_background_agents_command(content: str) -> bool:
@@ -288,9 +238,9 @@ def _parse_background_agents_args(content: str) -> tuple[int, str | None]:
 
 
 @app.post("/heartbeat/run", response_model=ChatResponse)
-async def heartbeat_run(request: Request, channel_id: str | None = None) -> ChatResponse:
+async def heartbeat_run(request: Request) -> ChatResponse:
     _require_api_auth(request)
-    result = await HeartbeatRunner(get_agent(), get_settings()).tick(channel_id)
+    result = await HeartbeatRunner(get_agent(), get_settings()).tick()
     return ChatResponse(content=result, steps=0)
 
 
@@ -306,11 +256,9 @@ async def cron_job_save(cron_request: CronJobRequest, request: Request) -> dict[
     _require_api_auth(request)
     agent = get_agent()
     try:
-        route = cron_request.channel_id or agent.memory.get_last_contact() or "primary"
         agent.cron.upsert_job(
             cron_request.name,
             cron_request.prompt,
-            route,
             cron_request.every_seconds,
             enabled=cron_request.enabled,
         )
@@ -387,9 +335,7 @@ async def _run_webhook_hook(name: str, payload: dict[str, Any]) -> AgentResponse
         f"Hook instructions:\n{hook['prompt']}\n\n"
         f"Payload JSON:\n{payload}"
     )
-    if hasattr(agent, "run_internal_event"):
-        return await agent.run_internal_event(content, f"webhook:{name}", delivery_route=hook["channel_id"])  # type: ignore[attr-defined]
-    return await agent.run(content, f"webhook:{name}", hook["channel_id"])  # type: ignore[attr-defined]
+    return await agent.run_internal_event(content, f"webhook:{name}")
 
 
 def _require_api_auth(request: Request) -> None:
@@ -406,16 +352,6 @@ def _require_allowed_discord_user(user_id: str) -> None:
     allowed = get_settings().discord_allowed_user_id.strip()
     if allowed and str(user_id) != allowed:
         raise HTTPException(status_code=403, detail="discord user is not allowed")
-
-
-def _extract_message(payload: DiscordGatewayPayload | DiscordMessage) -> DiscordMessage:
-    if isinstance(payload, DiscordMessage):
-        return payload
-    if payload.t and payload.t != "MESSAGE_CREATE":
-        raise HTTPException(status_code=400, detail=f"Unsupported Discord event type: {payload.t}")
-    if not payload.d:
-        raise HTTPException(status_code=400, detail="Discord payload missing d message object")
-    return DiscordMessage.model_validate(payload.d)
 
 
 def _resolve_public_path(public_root: Path, path: str) -> Path:

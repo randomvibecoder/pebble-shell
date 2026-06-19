@@ -23,8 +23,7 @@ DISCORD_MESSAGE_LIMIT = 1900
 @dataclass(frozen=True)
 class InteractionMessage:
     content: str
-    user_id: str
-    channel_id: str
+    author_id: str
 
 
 def verify_discord_signature(public_key: str, signature: str | None, timestamp: str | None, body: bytes) -> bool:
@@ -113,9 +112,8 @@ def interaction_to_message(payload: dict[str, Any]) -> InteractionMessage:
             prompt = json.dumps({"command": command_name, "options": option_values}, sort_keys=True)
 
     user = payload.get("user") or (payload.get("member") or {}).get("user") or {}
-    user_id = str(user.get("id") or "discord-interaction-user")
-    channel_id = str(payload.get("channel_id") or "discord-interaction-channel")
-    return InteractionMessage(content=str(prompt), user_id=user_id, channel_id=channel_id)
+    author_id = str(user.get("id") or "discord-interaction-user")
+    return InteractionMessage(content=str(prompt), author_id=author_id)
 
 
 def _flatten_option_values(options: list[dict[str, Any]], prefix: str = "") -> dict[str, Any]:

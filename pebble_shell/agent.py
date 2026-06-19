@@ -17,17 +17,15 @@ from .background_tasks import BackgroundJob, BackgroundTaskService, BackgroundTa
 from .config import Settings
 from .context_files import CONTEXT_FILES, ContextFileLoader
 from .cron import CronStore
-from .exec_policy import ExecAuditStore
+from .shell_audit import ShellAuditStore
 from .memory import MemoryContext, MemoryStore
 from .runtime_config import RuntimeConfigStore
 from .self_improvement import SelfImprovementStore
 from .skills import SkillLoader
-from .tools import CURRENT_CHANNEL_ID, CURRENT_USER_ID, WorkspaceTools
+from .tools import WorkspaceTools
 
 
 LOGGER = logging.getLogger(__name__)
-PRIMARY_CONVERSATION_ID = "primary"
-HUMAN_RUN_SOURCE = "human"
 
 
 SYSTEM_PROMPT = """You are Pebble Shell, a pragmatic coding and operations agent running inside a Docker container.
@@ -67,6 +65,7 @@ Memory:
 Chat behavior:
 - Pebble Shell is configured as a personal single-user agent in one linear chat. Transport routing is handled by the harness outside your model context.
 - Be concise and natural. On first contact, briefly ask about the user's hobbies, interests, work style, and what they want remembered while still handling urgent concrete requests.
+- During onboarding, write important durable facts the user shares, such as name, stable preferences, hobbies, work style, and explicit memory requests, into MEMORY.md with file tools.
 - Image attachments may be provided as image_url parts in the user message. Inspect them directly when relevant and mention if no image was actually provided.
 - Attachments may also be saved under sent_attachments and listed in the user message. Non-image files appear as [attached file: path] and must be inspected with normal tools when relevant; do not assume PDFs or other non-image files were read automatically. Images appear as [attached image file: path; already included as an image in this message, ...] and may also be provided to the vision model in the same message; do not re-inspect those image paths with inspect_image/read_file unless the user asks about the saved file later.
 - For heartbeat turns, take at most one safe bounded action and reply HEARTBEAT_OK when no user-visible update is needed."""
@@ -132,7 +131,7 @@ Rules:
 
 _RUN_LOCKS_GUARD = threading.Lock()
 _RUN_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
-Delivery = Callable[[str, str], Awaitable[None]]
+Delivery = Callable[[str], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -152,7 +151,6 @@ class ImageInput:
 @dataclass(frozen=True, slots=True)
 class QueuedUserMessage:
     content: str
-    user_id: str
     images: list[ImageInput]
 
 
@@ -172,11 +170,11 @@ class CodingAgent:
         self.runtime_config = RuntimeConfigStore(settings.runtime_config_db_path)
         self.self_improvement = SelfImprovementStore(settings.self_improvement_db_path)
         self.cron = CronStore(settings.cron_db_path)
-        self.exec_audit = ExecAuditStore(settings.exec_audit_db_path)
+        self.shell_audit = ShellAuditStore(settings.shell_audit_db_path)
         self.skills = SkillLoader(settings.agent_workspace, Path(__file__).resolve().parent.parent)
         self.memory = MemoryStore(settings.memory_db_path)
         self._inbox_lock = asyncio.Lock()
-        self._active_inboxes: dict[str, list[QueuedUserMessage]] = {}
+        self._active_inbox: list[QueuedUserMessage] | None = None
         self.background_store = BackgroundTaskStore(settings.background_tasks_db_path)
         self.background_tasks = BackgroundTaskService(self, self.background_store, settings.max_background_tasks)
         self._deliver: Delivery | None = None
@@ -187,7 +185,7 @@ class CodingAgent:
             self.skills,
             self.self_improvement,
             self.cron,
-            self.exec_audit,
+            self.shell_audit,
             self.memory,
             settings.exa_api_key,
             settings.exa_base_url,
@@ -206,59 +204,30 @@ class CodingAgent:
     def set_deliver(self, deliver: Delivery | None) -> None:
         self._deliver = deliver
 
-    async def enqueue_if_running(
-        self,
-        content: str,
-        user_id: str,
-        channel_id: str,
-        images: list[ImageInput] | None = None,
-    ) -> bool:
-        async with self._inbox_lock:
-            inbox = self._active_inboxes.get(channel_id)
-            if inbox is None:
-                return False
-            inbox.append(QueuedUserMessage(content=content, user_id=user_id, images=images or []))
-            return True
-
     async def enqueue_user_message(self, content: str, images: list[ImageInput] | None = None) -> bool:
-        return await self.enqueue_if_running(content, HUMAN_RUN_SOURCE, PRIMARY_CONVERSATION_ID, images)
-
-    async def run(self, content: str, user_id: str, channel_id: str, images: list[ImageInput] | None = None) -> AgentResponse:
-        self.bind_background_loop()
-        async with _process_run_lock():
-            return await self._run_locked(content, user_id, channel_id, images or [], delivery_route=channel_id)
+        async with self._inbox_lock:
+            if self._active_inbox is None:
+                return False
+            self._active_inbox.append(QueuedUserMessage(content=content, images=images or []))
+            return True
 
     async def run_user_message(
         self,
         content: str,
         images: list[ImageInput] | None = None,
-        delivery_route: str | None = None,
     ) -> AgentResponse:
         self.bind_background_loop()
         async with _process_run_lock():
-            return await self._run_locked(
-                content,
-                HUMAN_RUN_SOURCE,
-                PRIMARY_CONVERSATION_ID,
-                images or [],
-                delivery_route=delivery_route or PRIMARY_CONVERSATION_ID,
-            )
+            return await self._run_locked(content, "user", images or [])
 
     async def run_internal_event(
         self,
         content: str,
         source: str,
-        delivery_route: str | None = None,
     ) -> AgentResponse:
         self.bind_background_loop()
         async with _process_run_lock():
-            return await self._run_locked(
-                content,
-                source,
-                PRIMARY_CONVERSATION_ID,
-                [],
-                delivery_route=delivery_route or PRIMARY_CONVERSATION_ID,
-            )
+            return await self._run_locked(content, source, [])
 
     def bind_background_loop(self) -> None:
         self.background_tasks.bind_loop(asyncio.get_running_loop())
@@ -266,43 +235,34 @@ class CodingAgent:
     async def _run_locked(
         self,
         content: str,
-        user_id: str,
-        channel_id: str,
+        source: str,
         images: list[ImageInput],
-        delivery_route: str | None = None,
     ) -> AgentResponse:
-        delivery_route = delivery_route or channel_id
-        await self._activate_inbox(channel_id)
-        if delivery_route:
-            self.memory.set_last_contact(delivery_route)
+        await self._activate_inbox()
         user_memory_content = _memory_content_with_images(content, images)
         user_memory_contents = [user_memory_content]
-        messages, image_message_indexes, has_images = self._build_initial_messages(content, user_id, channel_id, images)
+        messages, image_message_indexes, has_images = self._build_initial_messages(content, source, images)
         memory_start_index = len(messages) - 1
 
         try:
             return await self._run_steps(
-                channel_id,
-                user_id,
+                source,
                 messages,
                 user_memory_contents,
                 image_message_indexes,
                 has_images,
-                delivery_route=delivery_route,
                 memory_start_index=memory_start_index,
             )
         finally:
-            await self._deactivate_inbox(channel_id)
+            await self._deactivate_inbox()
 
     def _build_initial_messages(
         self,
         content: str,
-        user_id: str,
-        channel_id: str,
+        source: str,
         images: list[ImageInput],
     ) -> tuple[list[dict[str, object]], dict[int, str], bool]:
         memory_context = self.memory.get_context(
-            channel_id,
             _memory_content_with_images(content, images),
             self.settings.recent_message_limit,
             self.settings.recent_message_token_budget,
@@ -312,7 +272,7 @@ class CodingAgent:
         ]
         user_message: dict[str, object] = {
             "role": "user",
-            "content": _user_message_content(user_id, channel_id, content, images),
+            "content": _user_message_content(content, images),
         }
         messages.extend(self.context_files.load())
         memory_md = self._memory_md_message()
@@ -321,25 +281,24 @@ class CodingAgent:
         messages.extend(
             [
                 {"role": "system", "content": self.skills.load(content)},
-                {"role": "system", "content": self._format_onboarding(memory_context, user_id)},
+                {"role": "system", "content": self._format_onboarding(memory_context, source)},
             ]
         )
         messages.extend(_recent_messages_as_native_roles(memory_context))
         messages.append(user_message)
         image_message_indexes: dict[int, str] = {}
         if images:
-            image_message_indexes[len(messages) - 1] = _user_text_with_image_references(user_id, channel_id, content, images)
+            image_message_indexes[len(messages) - 1] = _user_text_with_image_references(content, images)
         return messages, image_message_indexes, bool(images)
 
     def build_chat_completion_payload(
         self,
         content: str,
-        user_id: str,
-        channel_id: str,
+        source: str = "user",
         images: list[ImageInput] | None = None,
         include_background_tools: bool = True,
     ) -> dict[str, object]:
-        messages, _, _ = self._build_initial_messages(content, user_id, channel_id, images or [])
+        messages, _, _ = self._build_initial_messages(content, source, images or [])
         return {
             "model": self.current_model,
             "messages": messages,
@@ -347,9 +306,9 @@ class CodingAgent:
             "tool_choice": "auto",
         }
 
-    def dump_next_heartbeat_context(self, channel_id: str) -> Path:
+    def dump_next_heartbeat_context(self) -> Path:
         prompt = self._heartbeat_prompt()
-        payload = self.build_chat_completion_payload(prompt, "heartbeat", PRIMARY_CONVERSATION_ID)
+        payload = self.build_chat_completion_payload(prompt, "heartbeat")
         dumps_dir = self.settings.agent_workspace / "context_dumps"
         dumps_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -363,18 +322,15 @@ class CodingAgent:
         existing_context = self.background_store.get_context(job.id)
         if existing_context:
             return await self._run_steps(
-                job.channel_id,
                 f"background:{job.id}",
                 existing_context,
                 [f"Background task {job.id}: {job.prompt}"],
                 {},
                 False,
-                delivery_route=job.channel_id,
                 background_job_id=job.id,
                 include_background_tools=False,
             )
         memory_context = self.memory.get_context(
-            PRIMARY_CONVERSATION_ID,
             job.prompt,
             self.settings.recent_message_limit,
             self.settings.recent_message_token_budget,
@@ -402,26 +358,22 @@ class CodingAgent:
         )
         self.background_store.save_context(job.id, messages)
         return await self._run_steps(
-            job.channel_id,
             f"background:{job.id}",
             messages,
             [f"Background task {job.id}: {job.prompt}"],
             {},
             False,
-            delivery_route=job.channel_id,
             background_job_id=job.id,
             include_background_tools=False,
         )
 
     async def _run_steps(
         self,
-        channel_id: str,
-        user_id: str,
+        source: str,
         messages: list[dict[str, object]],
         user_memory_contents: list[str],
         image_message_indexes: dict[int, str],
         has_images: bool,
-        delivery_route: str | None = None,
         background_job_id: str | None = None,
         include_background_tools: bool = True,
         memory_start_index: int | None = None,
@@ -431,7 +383,7 @@ class CodingAgent:
         for step in range(1, self.settings.max_agent_steps + 1):
             if background_job_id and self.background_store.should_cancel(background_job_id):
                 final = "Background task cancelled before the next model step."
-                await self._remember_turn(channel_id, user_memory_contents, final, messages, memory_start_index, background_job_id)
+                await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
                 return AgentResponse(content=final, steps=step - 1)
             if background_job_id:
                 for message in self.background_store.drain_messages(background_job_id):
@@ -443,29 +395,22 @@ class CodingAgent:
                     )
                     self.background_store.add_event(background_job_id, "message_delivered", message[:4000])
                 self.background_store.save_context(background_job_id, messages)
-            queued_messages = [] if background_job_id else await self._drain_inbox(channel_id)
+            queued_messages = [] if background_job_id else await self._drain_inbox()
             for queued in queued_messages:
-                self.memory.set_last_contact(delivery_route or channel_id)
                 queued_memory_content = _memory_content_with_images(queued.content, queued.images)
                 user_memory_contents.append(queued_memory_content)
                 messages.append(
                     {
                         "role": "user",
-                        "content": _user_message_content(queued.user_id, channel_id, queued.content, queued.images),
+                        "content": _user_message_content(queued.content, queued.images),
                     }
                 )
                 if queued.images:
                     has_images = True
-                    image_message_indexes[len(messages) - 1] = _user_text_with_image_references(
-                        queued.user_id,
-                        channel_id,
-                        queued.content,
-                        queued.images,
-                    )
+                    image_message_indexes[len(messages) - 1] = _user_text_with_image_references(queued.content, queued.images)
 
             response = await self._chat_completion_with_context_retry(
                 messages=messages,
-                channel_id=channel_id,
                 background_job_id=background_job_id,
                 tools=self.tools.definitions(include_background_tools=include_background_tools),
                 tool_choice="auto",
@@ -477,7 +422,7 @@ class CodingAgent:
 
             tool_calls = message.tool_calls or []
             if not tool_calls:
-                if user_id == "heartbeat" and not _called_read_heartbeat(called_tool_records) and step < self.settings.max_agent_steps:
+                if source == "heartbeat" and not _called_read_heartbeat(called_tool_records) and step < self.settings.max_agent_steps:
                     messages.append(
                         {
                             "role": "system",
@@ -506,7 +451,7 @@ class CodingAgent:
                         }
                     )
                     continue
-                queued_messages = [] if background_job_id else await self._drain_inbox(channel_id)
+                queued_messages = [] if background_job_id else await self._drain_inbox()
                 if queued_messages:
                     for queued in queued_messages:
                         queued_memory_content = _memory_content_with_images(queued.content, queued.images)
@@ -514,17 +459,12 @@ class CodingAgent:
                         messages.append(
                             {
                                 "role": "user",
-                                "content": _user_message_content(queued.user_id, channel_id, queued.content, queued.images),
+                                "content": _user_message_content(queued.content, queued.images),
                             }
                         )
                         if queued.images:
                             has_images = True
-                            image_message_indexes[len(messages) - 1] = _user_text_with_image_references(
-                                queued.user_id,
-                                channel_id,
-                                queued.content,
-                                queued.images,
-                            )
+                            image_message_indexes[len(messages) - 1] = _user_text_with_image_references(queued.content, queued.images)
                     continue
                 final = message.content or ""
                 if not final.strip():
@@ -541,7 +481,6 @@ class CodingAgent:
                     try:
                         recovery = await self._chat_completion_with_context_retry(
                             messages=messages,
-                            channel_id=channel_id,
                             background_job_id=background_job_id,
                             tool_choice="none",
                         )
@@ -549,18 +488,16 @@ class CodingAgent:
                         messages.append(recovery_message.model_dump(exclude_none=True))
                         final = (recovery_message.content or "").strip()
                         LOGGER.warning(
-                            "empty_final_recovered channel=%s user=%s step=%s background_job=%s recovered=%s",
-                            channel_id,
-                            _log_user_kind(user_id),
+                            "empty_final_recovered source=%s step=%s background_job=%s recovered=%s",
+                            _log_source_kind(source),
                             step,
                             background_job_id or "",
                             bool(final),
                         )
                     except Exception as exc:  # noqa: BLE001 - fallback should still notify the user.
                         LOGGER.warning(
-                            "empty_final_recovery_failed channel=%s user=%s step=%s background_job=%s error=%s",
-                            channel_id,
-                            _log_user_kind(user_id),
+                            "empty_final_recovery_failed source=%s step=%s background_job=%s error=%s",
+                            _log_source_kind(source),
                             step,
                             background_job_id or "",
                             exc,
@@ -569,7 +506,7 @@ class CodingAgent:
                 if not final:
                     final = "I got an empty model response before I could produce a useful answer. Please resend your message or ask for `/last_run` once diagnostics are available."
                     messages.append({"role": "assistant", "content": final})
-                await self._remember_turn(channel_id, user_memory_contents, final, messages, memory_start_index, background_job_id)
+                await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
                 return AgentResponse(content=final, steps=step)
 
             for call in tool_calls:
@@ -577,15 +514,9 @@ class CodingAgent:
                 called_tool_records.append((call.function.name, call.function.arguments))
                 if background_job_id and self.background_store.should_cancel(background_job_id):
                     final = "Background task cancelled before running the next tool."
-                    await self._remember_turn(channel_id, user_memory_contents, final, messages, memory_start_index, background_job_id)
+                    await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
                     return AgentResponse(content=final, steps=step)
-                user_token = CURRENT_USER_ID.set(user_id)
-                channel_token = CURRENT_CHANNEL_ID.set(delivery_route or channel_id)
-                try:
-                    result = await asyncio.to_thread(self.tools.run, call.function.name, call.function.arguments)
-                finally:
-                    CURRENT_CHANNEL_ID.reset(channel_token)
-                    CURRENT_USER_ID.reset(user_token)
+                result = await asyncio.to_thread(self.tools.run, call.function.name, call.function.arguments)
                 messages.append(
                     {
                         "role": "tool",
@@ -615,29 +546,28 @@ class CodingAgent:
         try:
             response = await self._chat_completion_with_context_retry(
                 messages=messages,
-                channel_id=channel_id,
                 background_job_id=background_job_id,
                 tool_choice="none",
             )
             final = (response.choices[0].message.content or "").strip() or final
         except Exception as exc:  # noqa: BLE001 - still return a useful harness-level fallback.
             LOGGER.warning(
-                "agent_max_steps_finalization_failed channel=%s background_job=%s error=%s",
-                channel_id,
+                "agent_max_steps_finalization_failed source=%s background_job=%s error=%s",
+                _log_source_kind(source),
                 background_job_id or "",
                 exc,
             )
-        await self._remember_turn(channel_id, user_memory_contents, final, messages, memory_start_index, background_job_id)
+        await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
         return AgentResponse(content=final, steps=self.settings.max_agent_steps + 1)
 
-    async def run_heartbeat(self, channel_id: str) -> HeartbeatResponse:
+    async def run_heartbeat(self) -> HeartbeatResponse:
         prompt = self._heartbeat_prompt()
-        response = await self.run_internal_event(prompt, "heartbeat", delivery_route=channel_id)
+        response = await self.run_internal_event(prompt, "heartbeat")
         content = response.content.strip()
         should_notify = not _is_heartbeat_ack(content, self.settings.heartbeat_ack_max_chars)
         if not should_notify:
             content = "HEARTBEAT_OK"
-        self.memory.record_heartbeat(PRIMARY_CONVERSATION_ID, content, should_notify)
+        self.memory.record_heartbeat(content, should_notify)
         return HeartbeatResponse(content=content, should_notify=should_notify, steps=response.steps)
 
     def _heartbeat_prompt(self) -> str:
@@ -662,20 +592,19 @@ class CodingAgent:
             return None
         return {"role": "system", "content": f"Cached MEMORY.md snapshot:\n{self._memory_md_snapshot}"}
 
-    def _format_onboarding(self, context: MemoryContext, user_id: str) -> str:
-        service_user = user_id == "heartbeat" or user_id.startswith(("cron:", "webhook:"))
-        if service_user or context.summary or context.recent_messages:
+    def _format_onboarding(self, context: MemoryContext, source: str) -> str:
+        if source != "user" or context.summary or context.recent_messages:
             return "First-contact onboarding: not needed for this turn."
         return (
             "First-contact onboarding: this chat has no prior conversation memory. "
             "Briefly introduce yourself, ask 2-3 lightweight questions about the user's hobbies, interests, work style, "
-            "and what they want you to remember, then handle any urgent concrete request with a small first step. "
+            "and what they want you to remember. If the user shares durable facts or preferences, write them to MEMORY.md "
+            "with file tools. Then handle any urgent concrete request with a small first step. "
             "Keep it natural."
         )
 
     async def _remember_turn(
         self,
-        channel_id: str,
         user_contents: list[str],
         assistant_content: str,
         messages: list[dict[str, object]] | None = None,
@@ -686,13 +615,13 @@ class CodingAgent:
             for message in messages[memory_start_index:]:
                 if message.get("role") == "system" or _is_compaction_summary_message(message):
                     continue
-                self._remember_message(channel_id, message)
+                self._remember_message(message)
             return
         for user_content in user_contents:
-            self.memory.add_message(channel_id, "user", user_content)
-        self.memory.add_message(channel_id, "assistant", assistant_content)
+            self.memory.add_message("user", user_content)
+        self.memory.add_message("assistant", assistant_content)
 
-    def _remember_message(self, channel_id: str, message: dict[str, object]) -> None:
+    def _remember_message(self, message: dict[str, object]) -> None:
         role = str(message.get("role", ""))
         if role not in {"user", "assistant", "tool"}:
             return
@@ -700,44 +629,27 @@ class CodingAgent:
         if role == "assistant" and not normalized.get("tool_calls") and not str(normalized.get("content") or "").strip():
             return
         content = _message_memory_content(normalized)
-        self.memory.add_message(channel_id, role, content, normalized)
+        self.memory.add_message(role, content, normalized)
 
-    async def _activate_inbox(self, channel_id: str) -> None:
+    async def _activate_inbox(self) -> None:
         async with self._inbox_lock:
-            self._active_inboxes[channel_id] = []
+            self._active_inbox = []
 
-    async def _drain_inbox(self, channel_id: str) -> list[QueuedUserMessage]:
+    async def _drain_inbox(self) -> list[QueuedUserMessage]:
         async with self._inbox_lock:
-            inbox = self._active_inboxes.get(channel_id)
-            if not inbox:
+            if not self._active_inbox:
                 return []
-            drained = list(inbox)
-            inbox.clear()
+            drained = list(self._active_inbox)
+            self._active_inbox.clear()
             return drained
 
-    async def _deactivate_inbox(self, channel_id: str) -> None:
+    async def _deactivate_inbox(self) -> None:
         async with self._inbox_lock:
-            self._active_inboxes.pop(channel_id, None)
-
-    async def _summarize_channel(self, channel_id: str) -> None:
-        rows = self.memory.unsummarized_messages(channel_id)
-        if not rows:
-            return
-        existing = self.memory.get_context(channel_id, "", 0).summary
-        transcript = "\n".join(f"{role}: {content}" for _, role, content in rows)
-        response = await self._chat_completion(
-            messages=[
-                {"role": "system", "content": SUMMARY_PROMPT},
-                {"role": "user", "content": f"Prior summary:\n{existing or '(none)'}\n\nNew messages:\n{transcript}"},
-            ],
-        )
-        summary = response.choices[0].message.content or existing
-        self.memory.upsert_summary(channel_id, summary, rows[-1][0])
+            self._active_inbox = None
 
     async def _chat_completion_with_context_retry(
         self,
         messages: list[dict[str, object]],
-        channel_id: str,
         background_job_id: str | None,
         **kwargs: Any,
     ) -> Any:
@@ -747,7 +659,7 @@ class CodingAgent:
             except Exception as exc:  # noqa: BLE001 - context compaction should inspect provider errors.
                 if not _is_context_length_error(exc) or attempt == 2:
                     raise
-                compacted = await self._compact_active_messages(messages, channel_id, background_job_id)
+                compacted = await self._compact_active_messages(messages, background_job_id)
                 if not compacted:
                     raise
         raise RuntimeError("Context compaction retry loop ended unexpectedly")
@@ -755,7 +667,6 @@ class CodingAgent:
     async def _compact_active_messages(
         self,
         messages: list[dict[str, object]],
-        channel_id: str,
         background_job_id: str | None,
     ) -> bool:
         compactible_indexes = [
@@ -825,7 +736,7 @@ class CodingAgent:
         if background_job_id:
             self.background_store.set_summary(background_job_id, summary)
             self.background_store.save_context(background_job_id, messages)
-        await self._notify_summary(channel_id, background_job_id, before_tokens, summary_tokens)
+        await self._notify_summary(background_job_id, before_tokens, summary_tokens)
         return True
 
     async def _summarize_active_context(
@@ -854,17 +765,19 @@ class CodingAgent:
 
     async def _notify_summary(
         self,
-        channel_id: str,
         background_job_id: str | None,
         before_tokens: int,
         summary_tokens: int,
     ) -> None:
-        label = f"agent_{background_job_id}" if background_job_id else "foreground"
-        notice = f"[{label}, summarized {before_tokens} tokens to {summary_tokens} tokens]"
+        notice = "[compacted]"
         if background_job_id:
-            self.background_store.add_event(background_job_id, "summary", notice)
+            self.background_store.add_event(
+                background_job_id,
+                "summary",
+                f"[compacted] summarized {before_tokens} tokens to {summary_tokens} tokens",
+            )
         if self._deliver:
-            await self._deliver(channel_id, notice)
+            await self._deliver(notice)
 
     @property
     def current_model(self) -> str:
@@ -953,14 +866,14 @@ def _usage_value(response: Any, name: str) -> int | None:
     return int(value) if value is not None else None
 
 
-def _log_user_kind(user_id: str) -> str:
-    if user_id == "heartbeat":
+def _log_source_kind(source: str) -> str:
+    if source == "heartbeat":
         return "heartbeat"
-    if user_id.startswith("background:"):
+    if source.startswith("background:"):
         return "background"
-    if user_id.startswith("cron:"):
+    if source.startswith("cron:"):
         return "cron"
-    if user_id.startswith("webhook:"):
+    if source.startswith("webhook:"):
         return "webhook"
     return "user"
 
@@ -1052,7 +965,7 @@ def _called_read_heartbeat(called_tool_records: list[tuple[str, str]]) -> bool:
     return False
 
 
-def _user_message_content(user_id: str, channel_id: str, content: str, images: list[ImageInput]) -> str | list[dict[str, Any]]:
+def _user_message_content(content: str, images: list[ImageInput]) -> str | list[dict[str, Any]]:
     text = content or "(no text)"
     if not images:
         return text
@@ -1073,7 +986,7 @@ def _recent_messages_as_native_roles(context: MemoryContext) -> list[dict[str, o
     return messages
 
 
-def _user_text_with_image_references(user_id: str, channel_id: str, content: str, images: list[ImageInput]) -> str:
+def _user_text_with_image_references(content: str, images: list[ImageInput]) -> str:
     return _memory_content_with_images(content, images)
 
 

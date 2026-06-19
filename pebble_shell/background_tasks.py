@@ -6,7 +6,6 @@ import json
 import secrets
 import sqlite3
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,9 +21,8 @@ ACTIVE_STATUSES = ("queued", "running", "cancelling")
 PAUSED_STATUSES = ("blocked", "needs_attention")
 TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted")
 MESSAGEABLE_STATUSES = (*ACTIVE_STATUSES, *PAUSED_STATUSES)
-Delivery = Callable[[str, str], Awaitable[None]]
 JOB_SELECT_COLUMNS = """
-    id, title, prompt, user_id, channel_id, folder, status, steps, result, error,
+    id, title, prompt, folder, status, steps, result, error,
     created_at, updated_at, started_at, finished_at, model_calls, prompt_tokens,
     completion_tokens, total_tokens, last_model, self_check_retries, attention_summary
 """
@@ -45,8 +43,6 @@ class BackgroundJob:
     id: str
     title: str
     prompt: str
-    user_id: str
-    channel_id: str
     folder: str
     status: str
     steps: int
@@ -72,17 +68,17 @@ class BackgroundTaskStore:
         self._init_db()
         self.interrupt_running_jobs()
 
-    def create_job(self, prompt: str, title: str, user_id: str, channel_id: str, folder: str) -> BackgroundJob:
+    def create_job(self, prompt: str, title: str, folder: str) -> BackgroundJob:
         job_id = _new_job_id()
         now = time.time()
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into background_jobs(id, title, prompt, user_id, channel_id, folder, status, steps, result, error,
+                insert into background_jobs(id, title, prompt, folder, status, steps, result, error,
                                             created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?, 'queued', 0, '', '', ?, ?)
+                values (?, ?, ?, ?, 'queued', 0, '', '', ?, ?)
                 """,
-                (job_id, title.strip() or prompt.strip()[:80] or job_id, prompt.strip(), user_id, channel_id, folder, now, now),
+                (job_id, title.strip() or prompt.strip()[:80] or job_id, prompt.strip(), folder, now, now),
             )
         self.add_event(job_id, "queued", "Background task queued.")
         job = self.get_job(job_id)
@@ -373,8 +369,6 @@ class BackgroundTaskStore:
                     id text primary key,
                     title text not null,
                     prompt text not null,
-                    user_id text not null,
-                    channel_id text not null,
                     folder text not null,
                     status text not null,
                     steps integer not null default 0,
@@ -441,15 +435,11 @@ class BackgroundTaskService:
         self.max_active = max(1, max_active)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._tasks: dict[str, concurrent.futures.Future[None]] = {}
-        self._deliver: Delivery | None = None
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
 
-    def set_deliver(self, deliver: Delivery | None) -> None:
-        self._deliver = deliver
-
-    def start(self, prompt: str, title: str | None, user_id: str, channel_id: str) -> ToolResult:
+    def start(self, prompt: str, title: str | None) -> ToolResult:
         prompt = prompt.strip()
         if not prompt:
             return ToolResult(ok=False, output="background task prompt cannot be empty")
@@ -459,7 +449,7 @@ class BackgroundTaskService:
         if loop is None or loop.is_closed():
             return ToolResult(ok=False, output="Background task runner is not attached to a running event loop")
         folder = "background_jobs/pending"
-        job = self.store.create_job(prompt, title or "", user_id, channel_id, folder)
+        job = self.store.create_job(prompt, title or "", folder)
         folder = f"background_jobs/{job.id}"
         (self.agent.settings.agent_workspace / folder).mkdir(parents=True, exist_ok=True)
         with self.store._connect() as conn:
@@ -730,13 +720,13 @@ class BackgroundTaskService:
             "You are the foreground supervisor. Decide what, if anything, to tell the user."
         )
         try:
-            response = await self.agent.run(prompt, f"background:{job.id}", job.channel_id)
+            response = await self.agent.run_internal_event(prompt, f"background:{job.id}")
         except Exception as exc:  # noqa: BLE001
             self.store.add_event(job_id, "foreground_wakeup_failed", str(exc))
             return
         self.store.add_event(job_id, "foreground_wakeup", response.content[:4000])
-        if self._deliver and response.content.strip():
-            await self._deliver(job.channel_id, response.content)
+        if self.agent._deliver and response.content.strip():
+            await self.agent._deliver(response.content)
 
 
 def _new_job_id() -> str:
@@ -749,8 +739,6 @@ def _row_to_job(row: sqlite3.Row) -> BackgroundJob:
         id=row["id"],
         title=row["title"],
         prompt=row["prompt"],
-        user_id=row["user_id"],
-        channel_id=row["channel_id"],
         folder=row["folder"],
         status=row["status"],
         steps=int(row["steps"]),

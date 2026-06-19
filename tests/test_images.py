@@ -1,4 +1,4 @@
-from opencode_agent.images import image_input_from_bytes, is_supported_image
+from pebble_shell.images import image_input_from_bytes, is_supported_image
 
 
 def test_image_input_from_bytes_builds_data_url_and_preserves_source() -> None:

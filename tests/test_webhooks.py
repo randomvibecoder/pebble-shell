@@ -6,33 +6,33 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from opencode_agent.agent import AgentResponse
-from opencode_agent.self_improvement import SelfImprovementStore
-import opencode_agent.server as server
-from opencode_agent.server import app
+from pebble_shell.agent import AgentResponse
+from pebble_shell.self_improvement import SelfImprovementStore
+import pebble_shell.server as server
+from pebble_shell.server import app
 
 
 @dataclass
 class FakeWebhookAgent:
     self_improvement: SelfImprovementStore
-    calls: list[tuple[str, str, str]]
+    calls: list[tuple[str, str]]
 
-    async def run(self, content: str, user_id: str, channel_id: str) -> AgentResponse:
-        self.calls.append((content, user_id, channel_id))
-        return AgentResponse(content=f"handled {user_id} in {channel_id}", steps=1)
+    async def run_internal_event(self, content: str, source: str) -> AgentResponse:
+        self.calls.append((content, source))
+        return AgentResponse(content=f"handled {source}", steps=1)
 
 
 @dataclass
 class FailingWebhookAgent:
     self_improvement: SelfImprovementStore
 
-    async def run(self, content: str, user_id: str, channel_id: str) -> AgentResponse:
+    async def run_internal_event(self, content: str, source: str) -> AgentResponse:
         raise RuntimeError("model unavailable")
 
 
 def test_webhook_trigger_routes_fake_email_environment(tmp_path: Path, monkeypatch) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    store.upsert_hook("email-alert", "Classify priority and summarize sender intent.", "ops-channel")
+    store.upsert_hook("email-alert", "Classify priority and summarize sender intent.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
 
@@ -48,10 +48,9 @@ def test_webhook_trigger_routes_fake_email_environment(tmp_path: Path, monkeypat
     )
 
     assert response.status_code == 200
-    assert response.json() == {"content": "handled webhook:email-alert in ops-channel", "steps": 1}
-    content, user_id, channel_id = fake.calls[0]
-    assert user_id == "webhook:email-alert"
-    assert channel_id == "ops-channel"
+    assert response.json() == {"content": "handled webhook:email-alert", "steps": 1}
+    content, source = fake.calls[0]
+    assert source == "webhook:email-alert"
     assert "Classify priority" in content
     assert "mailgun" in content
     assert "Database latency" in content
@@ -63,7 +62,7 @@ def test_webhook_trigger_routes_fake_email_environment(tmp_path: Path, monkeypat
 
 def test_webhook_trigger_routes_fake_ci_environment(tmp_path: Path, monkeypatch) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    store.upsert_hook("ci-failure", "Inspect failed checks and propose the next bounded fix.", "builds")
+    store.upsert_hook("ci-failure", "Inspect failed checks and propose the next bounded fix.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
 
@@ -81,16 +80,15 @@ def test_webhook_trigger_routes_fake_ci_environment(tmp_path: Path, monkeypatch)
     )
 
     assert response.status_code == 200
-    content, user_id, channel_id = fake.calls[0]
-    assert user_id == "webhook:ci-failure"
-    assert channel_id == "builds"
+    content, source = fake.calls[0]
+    assert source == "webhook:ci-failure"
     assert "github-actions" in content
     assert "failed_step" in content
 
 
 def test_webhook_background_mode_acknowledges_immediately(tmp_path: Path, monkeypatch) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    store.upsert_hook("suggestion-box", "Summarize suggestions.", "suggestions")
+    store.upsert_hook("suggestion-box", "Summarize suggestions.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
 
@@ -115,7 +113,7 @@ def test_webhook_background_mode_acknowledges_immediately(tmp_path: Path, monkey
 
 def test_webhook_event_records_failures(tmp_path: Path, monkeypatch) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    store.upsert_hook("failing-hook", "Handle failures.", "ops")
+    store.upsert_hook("failing-hook", "Handle failures.")
     monkeypatch.setattr(server, "get_agent", lambda: FailingWebhookAgent(store))
 
     response = TestClient(app, raise_server_exceptions=False).post("/webhooks/failing-hook", json={"event": "boom"})
@@ -130,7 +128,7 @@ def test_webhook_event_records_failures(tmp_path: Path, monkeypatch) -> None:
 
 def test_webhook_trigger_rejects_disabled_hook(tmp_path: Path, monkeypatch) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    store.upsert_hook("disabled-hook", "Do not run.", "ops")
+    store.upsert_hook("disabled-hook", "Do not run.")
     with sqlite3.connect(tmp_path / "self.sqlite3") as conn:
         conn.execute("update webhook_hooks set enabled = 0 where name = 'disabled-hook'")
     fake = FakeWebhookAgent(store, [])

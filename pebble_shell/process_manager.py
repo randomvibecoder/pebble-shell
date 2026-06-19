@@ -27,7 +27,7 @@ class BackgroundProcessManager:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.processes: dict[str, ManagedProcess] = {}
-        self.state_dir = self.root / ".opencode_agent" / "processes"
+        self.state_dir = self.root / ".pebble_shell" / "processes"
         self.state_dir.mkdir(parents=True, exist_ok=True)
 
     def start(self, name: str, command: str) -> dict[str, Any]:
@@ -109,7 +109,7 @@ def _status_dict(managed: ManagedProcess) -> dict[str, Any]:
         "running": returncode is None,
         "returncode": returncode,
         "started_at": managed.started_at,
-        "log_file": f".opencode_agent/processes/{managed.name}.log",
+        "log_file": f".pebble_shell/processes/{managed.name}.log",
     }
 
 

@@ -5,7 +5,7 @@ import logging
 
 import uvicorn
 
-from .agent import PRIMARY_CONVERSATION_ID, CodingAgent
+from .agent import CodingAgent
 from .config import Settings
 from .cron import CronRunner
 from .discord_bot import run_discord_bot
@@ -68,11 +68,9 @@ async def _send_initial_dm_once(settings: Settings, agent: CodingAgent) -> None:
     if agent.memory.get_contact(marker_key):
         return
 
-    sent = await asyncio.to_thread(send_dm, settings.discord_bot_token, user_id, message)
-    channel_id = str((sent[0] if sent else {}).get("channel_id") or f"dm:{user_id}")
-    agent.memory.add_message(PRIMARY_CONVERSATION_ID, "assistant", message)
-    agent.memory.set_last_contact(channel_id)
-    agent.memory.set_contact(marker_key, channel_id)
+    await asyncio.to_thread(send_dm, settings.discord_bot_token, user_id, message)
+    agent.memory.add_message("assistant", message)
+    agent.memory.set_contact(marker_key, "sent")
 
 
 if __name__ == "__main__":

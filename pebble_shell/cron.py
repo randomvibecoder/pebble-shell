@@ -5,7 +5,6 @@ import json
 import re
 import sqlite3
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,14 +14,11 @@ if TYPE_CHECKING:
 
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
-Delivery = Callable[[str, str], Awaitable[None]]
-
 
 @dataclass(slots=True)
 class CronJob:
     name: str
     prompt: str
-    channel_id: str
     every_seconds: int
     enabled: bool
     next_run_at: float
@@ -34,7 +30,7 @@ class CronStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def upsert_job(self, name: str, prompt: str, channel_id: str, every_seconds: int, enabled: bool = True) -> None:
+    def upsert_job(self, name: str, prompt: str, every_seconds: int, enabled: bool = True) -> None:
         _validate_name(name)
         if every_seconds < 60:
             raise ValueError("cron every_seconds must be at least 60")
@@ -44,17 +40,16 @@ class CronStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into cron_jobs(name, prompt, channel_id, every_seconds, enabled, next_run_at)
-                values (?, ?, ?, ?, ?, ?)
+                insert into cron_jobs(name, prompt, every_seconds, enabled, next_run_at)
+                values (?, ?, ?, ?, ?)
                 on conflict(name) do update set
                     prompt = excluded.prompt,
-                    channel_id = excluded.channel_id,
                     every_seconds = excluded.every_seconds,
                     enabled = excluded.enabled,
                     next_run_at = excluded.next_run_at,
                     updated_at = current_timestamp
                 """,
-                (name, prompt.strip(), channel_id.strip(), every_seconds, int(enabled), next_run_at),
+                (name, prompt.strip(), every_seconds, int(enabled), next_run_at),
             )
 
     def set_enabled(self, name: str, enabled: bool) -> None:
@@ -69,7 +64,7 @@ class CronStore:
     def get_job(self, name: str) -> CronJob | None:
         with self._connect() as conn:
             row = conn.execute(
-                "select name, prompt, channel_id, every_seconds, enabled, next_run_at from cron_jobs where name = ?",
+                "select name, prompt, every_seconds, enabled, next_run_at from cron_jobs where name = ?",
                 (name,),
             ).fetchone()
         return _row_to_job(row) if row else None
@@ -79,7 +74,7 @@ class CronStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select name, prompt, channel_id, every_seconds, enabled, next_run_at
+                select name, prompt, every_seconds, enabled, next_run_at
                 from cron_jobs
                 where enabled = 1 and next_run_at <= ?
                 order by next_run_at asc
@@ -93,7 +88,7 @@ class CronStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select name, prompt, channel_id, every_seconds, enabled, last_run_at, next_run_at, updated_at
+                select name, prompt, every_seconds, enabled, last_run_at, next_run_at, updated_at
                 from cron_jobs
                 order by name
                 """
@@ -102,12 +97,11 @@ class CronStore:
             {
                 "name": row[0],
                 "prompt": row[1],
-                "channel_id": row[2],
-                "every_seconds": row[3],
-                "enabled": bool(row[4]),
-                "last_run_at": row[5],
-                "next_run_at": row[6],
-                "updated_at": row[7],
+                "every_seconds": row[2],
+                "enabled": bool(row[3]),
+                "last_run_at": row[4],
+                "next_run_at": row[5],
+                "updated_at": row[6],
             }
             for row in rows
         ]
@@ -154,7 +148,6 @@ class CronStore:
                 create table if not exists cron_jobs (
                     name text primary key,
                     prompt text not null,
-                    channel_id text not null,
                     every_seconds integer not null,
                     enabled integer not null default 1,
                     last_run_at real,
@@ -175,10 +168,9 @@ class CronStore:
 
 
 class CronRunner:
-    def __init__(self, agent: "CodingAgent", store: CronStore, deliver: Delivery | None = None) -> None:
+    def __init__(self, agent: "CodingAgent", store: CronStore) -> None:
         self.agent = agent
         self.store = store
-        self.deliver = deliver
         self._stop = asyncio.Event()
 
     async def serve(self, poll_seconds: int = 15) -> None:
@@ -204,16 +196,13 @@ class CronRunner:
             raise ValueError(f"Unknown cron job: {name}")
         content = f"Scheduled job `{job.name}` fired.\n\nJob instructions:\n{job.prompt}"
         try:
-            if hasattr(self.agent, "run_internal_event"):
-                response = await self.agent.run_internal_event(content, f"cron:{job.name}", delivery_route=job.channel_id)
-            else:
-                response = await self.agent.run(content, f"cron:{job.name}", job.channel_id)
+            response = await self.agent.run_internal_event(content, f"cron:{job.name}")
         except Exception as exc:
             self.store.record_run(job, str(exc), steps=0, ok=False)
             raise
         self.store.record_run(job, response.content, response.steps, ok=True)
-        if self.deliver:
-            await self.deliver(job.channel_id, response.content)
+        if self.agent._deliver and response.content.strip():
+            await self.agent._deliver(response.content)
         return response.content
 
 
@@ -221,10 +210,9 @@ def _row_to_job(row: sqlite3.Row | tuple[Any, ...]) -> CronJob:
     return CronJob(
         name=row[0],
         prompt=row[1],
-        channel_id=row[2],
-        every_seconds=int(row[3]),
-        enabled=bool(row[4]),
-        next_run_at=float(row[5]),
+        every_seconds=int(row[2]),
+        enabled=bool(row[3]),
+        next_run_at=float(row[4]),
     )
 
 

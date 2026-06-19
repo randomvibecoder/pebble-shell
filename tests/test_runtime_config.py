@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from opencode_agent.runtime_config import RuntimeConfigStore
-from opencode_agent.tools import WorkspaceTools
+from pebble_shell.runtime_config import RuntimeConfigStore
+from pebble_shell.tools import WorkspaceTools
 
 
 def test_runtime_config_store_persists_allowed_keys(tmp_path: Path) -> None:
@@ -34,17 +34,17 @@ def test_runtime_config_tool_updates_model(tmp_path: Path) -> None:
     assert store.get("openai_model") == "gpt-6.7-agi"
 
 
-def test_runtime_config_rejects_unsupported_shell_policy_flag(tmp_path: Path) -> None:
+def test_runtime_config_rejects_unsupported_keys(tmp_path: Path) -> None:
     store = RuntimeConfigStore(tmp_path / "runtime.sqlite3")
 
     with pytest.raises(ValueError):
-        store.set("shell_policy", "strict")
+        store.set("unsupported_key", "strict")
 
 
 def test_runtime_config_all_filters_obsolete_keys(tmp_path: Path) -> None:
     store = RuntimeConfigStore(tmp_path / "runtime.sqlite3")
     with store._connect() as conn:
-        conn.execute("insert into runtime_config(key, value) values ('allow_destructive_shell', 'true')")
+        conn.execute("insert into runtime_config(key, value) values ('legacy_key', 'true')")
     store.set("openai_model", "claude-haiku-4-5-20251001")
 
     assert store.all() == {"openai_model": "claude-haiku-4-5-20251001"}

@@ -33,11 +33,11 @@ RUN pip install --upgrade pip \
     && chown -R agent:agent /ms-playwright
 
 COPY --chown=agent:agent pyproject.toml README.md AGENTS.md SOUL.md USER.md TOOLS.md HEARTBEAT.md SKILLS.md MEMORY.md /app/
-COPY --chown=agent:agent opencode_agent /app/opencode_agent
+COPY --chown=agent:agent pebble_shell /app/pebble_shell
 RUN pip install --no-deps .
 
 EXPOSE 8080 8081 8082 8083 8084 8085
 
 USER agent
 
-CMD ["python", "-m", "opencode_agent"]
+CMD ["python", "-m", "pebble_shell"]

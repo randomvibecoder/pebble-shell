@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from opencode_agent.context_files import ContextFileLoader
+from pebble_shell.context_files import ContextFileLoader
 
 
 def test_context_loader_does_not_load_heartbeat_md(tmp_path: Path) -> None:

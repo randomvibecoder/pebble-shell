@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import contextvars
 import json
 import mimetypes
 import shutil
@@ -16,7 +15,7 @@ from playwright.sync_api import sync_playwright
 from pydantic import BaseModel
 
 from .cron import CronStore, dumps_cron_state
-from .exec_policy import ExecAuditStore, ExecPolicy
+from .shell_audit import ShellAuditStore
 from .exa_search import ExaSearchClient
 from .memory import MemoryStore
 from .process_manager import BackgroundProcessManager
@@ -25,15 +24,13 @@ from .runtime_config import RuntimeConfigStore
 from .self_improvement import SelfImprovementStore
 from .skills import SkillLoader
 
-CURRENT_USER_ID: contextvars.ContextVar[str] = contextvars.ContextVar("current_user_id", default="")
-CURRENT_CHANNEL_ID: contextvars.ContextVar[str] = contextvars.ContextVar("current_channel_id", default="")
 MAX_READ_FILE_BYTES = 200_000
 MAX_READ_FILE_CHARS = 40_000
 MAX_INSPECT_IMAGE_BYTES = 4_000_000
 MAX_SEND_FILE_BYTES = 25_000_000
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-FileSender = Callable[[str, Path], str]
-TextSender = Callable[[str, str], str]
+FileSender = Callable[[Path], str]
+TextSender = Callable[[str], str]
 
 
 class ToolResult(BaseModel):
@@ -50,7 +47,7 @@ class WorkspaceTools:
         skills: SkillLoader | None = None,
         self_improvement: SelfImprovementStore | None = None,
         cron: CronStore | None = None,
-        exec_audit: ExecAuditStore | None = None,
+        shell_audit: ShellAuditStore | None = None,
         memory: MemoryStore | None = None,
         exa_api_key: str = "",
         exa_base_url: str = "https://api.exa.ai",
@@ -72,7 +69,7 @@ class WorkspaceTools:
         self.skills = skills
         self.self_improvement = self_improvement
         self.cron = cron
-        self.exec_audit = exec_audit
+        self.shell_audit = shell_audit
         self.memory = memory
         self.processes = BackgroundProcessManager(self.root)
         self.exa = ExaSearchClient(exa_api_key, exa_base_url)
@@ -232,20 +229,6 @@ class WorkspaceTools:
                         "properties": {
                             "source_path": {"type": "string", "description": "Workspace-relative file or directory to publish."},
                             "name": {"type": "string", "description": "Public site slug, using letters, numbers, underscores, or hyphens."},
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "send_file_to_user",
-                    "description": "Send a workspace file to the user. Use after creating artifacts such as PDFs, reports, images, or archives.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["path"],
-                        "properties": {
-                            "path": {"type": "string", "description": "Workspace-relative file path to send."}
                         },
                     },
                 },
@@ -527,13 +510,14 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "exec_audit_recent",
-                    "description": "List recent shell execution audit records, including denied commands.",
+                    "name": "shell_audit_recent",
+                    "description": "List recent shell command audit records.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
         ]
         if include_background_tools:
+            definitions.append(_send_file_tool_definition())
             definitions.append(_send_msg_tool_definition())
         if include_background_tools and self.background_tasks:
             definitions.extend(_background_tool_definitions())
@@ -601,7 +585,7 @@ class WorkspaceTools:
             if name == "skill_delete":
                 return self.skill_delete(arguments["name"])
             if name == "webhook_hook_save":
-                return self.webhook_hook_save(arguments["name"], arguments["prompt"], arguments.get("channel_id"))
+                return self.webhook_hook_save(arguments["name"], arguments["prompt"])
             if name == "self_improvements_list":
                 return self.self_improvements_list()
             if name == "webhook_events_list":
@@ -612,14 +596,13 @@ class WorkspaceTools:
                     arguments["prompt"],
                     int(arguments["every_seconds"]),
                     arguments.get("enabled", True),
-                    arguments.get("channel_id"),
                 )
             if name == "cron_jobs_list":
                 return self.cron_jobs_list()
             if name == "cron_job_set_enabled":
                 return self.cron_job_set_enabled(arguments["name"], bool(arguments["enabled"]))
-            if name == "exec_audit_recent":
-                return self.exec_audit_recent()
+            if name == "shell_audit_recent":
+                return self.shell_audit_recent()
             if name == "background_task_start":
                 return self.background_task_start(arguments["prompt"], arguments.get("title"))
             if name == "background_task_status":
@@ -803,13 +786,10 @@ class WorkspaceTools:
         size = target.stat().st_size
         if size > self.max_send_file_bytes:
             return ToolResult(ok=False, output=f"File exceeds {self.max_send_file_bytes} bytes: {target.relative_to(self.root)}")
-        channel_id = CURRENT_CHANNEL_ID.get()
-        if not channel_id:
-            return ToolResult(ok=False, output="send_file_to_user requires an active chat context")
         if not self.file_sender:
             return ToolResult(ok=True, output=f"File ready at {target.relative_to(self.root)}; no file sender is configured")
         try:
-            sent = self.file_sender(channel_id, target)
+            sent = self.file_sender(target)
         except Exception as exc:  # noqa: BLE001 - keep artifact path visible when Discord delivery is flaky.
             return ToolResult(
                 ok=False,
@@ -823,29 +803,16 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="send_msg requires a non-empty msg")
         if len(msg) > 500:
             return ToolResult(ok=False, output="send_msg msg must be 500 characters or fewer")
-        user_id = CURRENT_USER_ID.get()
-        if user_id.startswith("background:"):
-            return ToolResult(ok=False, output="send_msg is only available to the foreground agent")
-        channel_id = CURRENT_CHANNEL_ID.get()
-        if not channel_id:
-            return ToolResult(ok=False, output="send_msg requires an active chat context")
         if not self.text_sender:
             return ToolResult(ok=True, output="Progress message ready; no text sender is configured")
-        sent = self.text_sender(channel_id, msg)
+        sent = self.text_sender(msg)
         return ToolResult(ok=True, output=sent or "Sent progress message to the user")
 
     def shell(self, command: str) -> ToolResult:
         try:
-            first = shlex.split(command)[0]
+            shlex.split(command)[0]
         except (IndexError, ValueError) as exc:
             return ToolResult(ok=False, output=f"Invalid shell command: {exc}")
-
-        decision = ExecPolicy().decide(command, first)
-        if not decision.allowed:
-            output = decision.reason
-            if self.exec_audit:
-                self.exec_audit.record(command, False, decision.risk, decision.reason, None, output)
-            return ToolResult(ok=False, output=output)
 
         completed = subprocess.run(
             command,
@@ -860,24 +827,19 @@ class WorkspaceTools:
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
         if len(output) > 12000:
             output = output[:12000] + "\n[output truncated]"
-        if self.exec_audit:
-            self.exec_audit.record(command, completed.returncode == 0, decision.risk, decision.reason, completed.returncode, output)
+        if self.shell_audit:
+            self.shell_audit.record(command, completed.returncode == 0, "normal", "Allowed inside Docker container", completed.returncode, output)
         return ToolResult(ok=completed.returncode == 0, output=output or f"exit code {completed.returncode}")
 
     def process_start(self, name: str, command: str) -> ToolResult:
         try:
-            first = shlex.split(command)[0]
+            shlex.split(command)[0]
         except (IndexError, ValueError) as exc:
             return ToolResult(ok=False, output=f"Invalid process command: {exc}")
 
-        decision = ExecPolicy().decide(command, first)
-        if not decision.allowed:
-            if self.exec_audit:
-                self.exec_audit.record(command, False, decision.risk, decision.reason, None, decision.reason)
-            return ToolResult(ok=False, output=decision.reason)
         status = self.processes.start(name, command)
-        if self.exec_audit:
-            self.exec_audit.record(command, True, decision.risk, f"Started background process {name}", None, json.dumps(status, sort_keys=True))
+        if self.shell_audit:
+            self.shell_audit.record(command, True, "normal", f"Started background process {name}", None, json.dumps(status, sort_keys=True))
         return ToolResult(ok=True, output=json.dumps(status, sort_keys=True))
 
     def processes_list(self) -> ToolResult:
@@ -1049,13 +1011,10 @@ class WorkspaceTools:
             self.self_improvement.record("skill_delete", normalized, f"Deleted skill {normalized}", {"name": normalized})
         return ToolResult(ok=True, output=f"Deleted skill {normalized}")
 
-    def webhook_hook_save(self, name: str, prompt: str, channel_id: str | None = None) -> ToolResult:
+    def webhook_hook_save(self, name: str, prompt: str) -> ToolResult:
         if not self.self_improvement:
             return ToolResult(ok=False, output="Self-improvement store is not enabled")
-        route = (channel_id or CURRENT_CHANNEL_ID.get()).strip()
-        if not route:
-            return ToolResult(ok=False, output="webhook_hook_save requires an active chat context")
-        self.self_improvement.upsert_hook(name, prompt, route)
+        self.self_improvement.upsert_hook(name, prompt)
         self.self_improvement.record("webhook_hook", name, f"Webhook hook {name}", {})
         return ToolResult(ok=True, output=f"Saved webhook hook {name}; trigger with POST /webhooks/{name}")
 
@@ -1067,7 +1026,7 @@ class WorkspaceTools:
             output=json.dumps(
                 {
                     "improvements": self.self_improvement.list_records(),
-                    "webhook_hooks": _strip_route_fields(self.self_improvement.list_hooks()),
+                    "webhook_hooks": self.self_improvement.list_hooks(),
                     "webhook_events": self.self_improvement.list_webhook_events(),
                 },
                 sort_keys=True,
@@ -1083,26 +1042,18 @@ class WorkspaceTools:
         self,
         name: str,
         prompt: str,
-        every_seconds: int | str,
-        enabled: bool | int = True,
-        channel_id: str | None = None,
+        every_seconds: int,
+        enabled: bool = True,
     ) -> ToolResult:
         if not self.cron:
             return ToolResult(ok=False, output="Cron store is not enabled")
-        if isinstance(every_seconds, str):
-            channel_id = every_seconds
-            every_seconds = int(enabled)
-            enabled = True
-        route = (channel_id or CURRENT_CHANNEL_ID.get()).strip()
-        if not route:
-            return ToolResult(ok=False, output="cron_job_save requires an active chat context")
-        self.cron.upsert_job(name, prompt, route, int(every_seconds), enabled=bool(enabled))
+        self.cron.upsert_job(name, prompt, int(every_seconds), enabled=bool(enabled))
         return ToolResult(ok=True, output=f"Saved cron job {name} every {every_seconds} seconds")
 
     def cron_jobs_list(self) -> ToolResult:
         if not self.cron:
             return ToolResult(ok=False, output="Cron store is not enabled")
-        return ToolResult(ok=True, output=_strip_route_fields_json(dumps_cron_state(self.cron)))
+        return ToolResult(ok=True, output=dumps_cron_state(self.cron))
 
     def cron_job_set_enabled(self, name: str, enabled: bool) -> ToolResult:
         if not self.cron:
@@ -1110,19 +1061,15 @@ class WorkspaceTools:
         self.cron.set_enabled(name, enabled)
         return ToolResult(ok=True, output=f"Set cron job {name} enabled={enabled}")
 
-    def exec_audit_recent(self) -> ToolResult:
-        if not self.exec_audit:
-            return ToolResult(ok=False, output="Exec audit store is not enabled")
-        return ToolResult(ok=True, output=json.dumps(self.exec_audit.recent(), sort_keys=True))
+    def shell_audit_recent(self) -> ToolResult:
+        if not self.shell_audit:
+            return ToolResult(ok=False, output="Shell audit store is not enabled")
+        return ToolResult(ok=True, output=json.dumps(self.shell_audit.recent(), sort_keys=True))
 
     def background_task_start(self, prompt: str, title: str | None = None) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
-        user_id = CURRENT_USER_ID.get()
-        channel_id = CURRENT_CHANNEL_ID.get()
-        if not user_id or not channel_id:
-            return ToolResult(ok=False, output="background_task_start requires an active chat context")
-        return self.background_tasks.start(prompt, title, user_id, channel_id)
+        return self.background_tasks.start(prompt, title)
 
     def background_task_status(self, job_id: str) -> ToolResult:
         if not self.background_tasks:
@@ -1405,6 +1352,23 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
     ]
 
 
+def _send_file_tool_definition() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "send_file_to_user",
+            "description": "Send a workspace file to the user. Use after creating artifacts such as PDFs, reports, images, or archives.",
+            "parameters": {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace-relative file path to send."}
+                },
+            },
+        },
+    }
+
+
 def _send_msg_tool_definition() -> dict[str, Any]:
     return {
         "type": "function",
@@ -1428,16 +1392,3 @@ def _send_msg_tool_definition() -> dict[str, Any]:
             },
         },
     }
-
-
-def _strip_route_fields_json(payload: str) -> str:
-    data = json.loads(payload)
-    return json.dumps(_strip_route_fields(data), sort_keys=True)
-
-
-def _strip_route_fields(value: Any) -> Any:
-    if isinstance(value, list):
-        return [_strip_route_fields(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _strip_route_fields(item) for key, item in value.items() if key not in {"channel_id", "user_id"}}
-    return value

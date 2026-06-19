@@ -32,5 +32,5 @@
 - `cron_job_save` registers interval-based scheduled work with persisted results.
 - `cron_jobs_list` lists scheduled jobs and recent run results.
 - `cron_job_set_enabled` pauses or resumes a scheduled job.
-- `exec_audit_recent` lists recent shell execution audit records.
+- `shell_audit_recent` lists recent shell command audit records.
 - Durable self-memory lives in `MEMORY.md`; use normal file tools such as `read_file`, `edit_file`, `write_file`, or `apply_patch` to maintain it.

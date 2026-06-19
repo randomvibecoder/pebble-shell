@@ -1,23 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
 
-@dataclass(slots=True)
-class PolicyDecision:
-    allowed: bool
-    reason: str
-    risk: str
-
-
-class ExecPolicy:
-    def decide(self, command: str, first: str) -> PolicyDecision:
-        return PolicyDecision(True, "Allowed inside Docker container", "normal")
-
-
-class ExecAuditStore:
+class ShellAuditStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,7 +14,7 @@ class ExecAuditStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into exec_audit(command, allowed, risk, reason, exit_code, output)
+                insert into shell_audit(command, allowed, risk, reason, exit_code, output)
                 values (?, ?, ?, ?, ?, ?)
                 """,
                 (command, int(allowed), risk, reason, exit_code, output[:4000]),
@@ -38,7 +25,7 @@ class ExecAuditStore:
             rows = conn.execute(
                 """
                 select command, allowed, risk, reason, exit_code, output, created_at
-                from exec_audit
+                from shell_audit
                 order by id desc
                 limit ?
                 """,
@@ -64,7 +51,7 @@ class ExecAuditStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                create table if not exists exec_audit (
+                create table if not exists shell_audit (
                     id integer primary key autoincrement,
                     command text not null,
                     allowed integer not null,

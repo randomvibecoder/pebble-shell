@@ -2,21 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
 
 from .agent import CodingAgent
 from .config import Settings
 
 LOGGER = logging.getLogger(__name__)
 
-Delivery = Callable[[str, str], Awaitable[None]]
-
 
 class HeartbeatRunner:
-    def __init__(self, agent: CodingAgent, settings: Settings, deliver: Delivery | None = None) -> None:
+    def __init__(self, agent: CodingAgent, settings: Settings) -> None:
         self.agent = agent
         self.settings = settings
-        self.deliver = deliver
         self._stop = asyncio.Event()
 
     async def serve(self) -> None:
@@ -37,14 +33,10 @@ class HeartbeatRunner:
     async def stop(self) -> None:
         self._stop.set()
 
-    async def tick(self, channel_id: str | None = None) -> str:
-        target = channel_id or self.agent.memory.get_last_contact()
-        if not target:
-            return "HEARTBEAT_SKIPPED: no last contact"
-
-        result = await self.agent.run_heartbeat(target)
-        if result.should_notify and self.deliver:
-            await self.deliver(target, result.content)
+    async def tick(self) -> str:
+        result = await self.agent.run_heartbeat()
+        if result.should_notify and self.agent._deliver:
+            await self.agent._deliver(result.content)
         return result.content
 
     def _current_interval(self) -> int:

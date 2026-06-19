@@ -1,4 +1,4 @@
-from opencode_agent.agent import _is_heartbeat_ack
+from pebble_shell.agent import _is_heartbeat_ack
 
 
 def test_heartbeat_ack_is_suppressed_at_edges() -> None:
