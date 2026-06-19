@@ -205,8 +205,8 @@ async def test_memory_md_is_cached_until_compaction_or_restart(tmp_path: Path) -
 
     first_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system")
     second_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[1]["messages"] if message["role"] == "system")
-    assert "Cached MEMORY.md snapshot:\ninitial memory" in first_system_text
-    assert "Cached MEMORY.md snapshot:\ninitial memory" in second_system_text
+    assert "Cached context/MEMORY.md snapshot:\ninitial memory" in first_system_text
+    assert "Cached context/MEMORY.md snapshot:\ninitial memory" in second_system_text
     assert "changed memory" not in second_system_text
 
 
@@ -226,8 +226,8 @@ async def test_context_files_are_cached_until_compaction_or_restart(tmp_path: Pa
 
     first_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system")
     second_system_text = "\n".join(str(message["content"]) for message in fake_client.chat.completions.calls[1]["messages"] if message["role"] == "system")
-    assert "TOOLS.md:\ninitial tools" in first_system_text
-    assert "TOOLS.md:\ninitial tools" in second_system_text
+    assert "context/TOOLS.md:\ninitial tools" in first_system_text
+    assert "context/TOOLS.md:\ninitial tools" in second_system_text
     assert "changed tools" not in second_system_text
 
 
@@ -258,7 +258,7 @@ async def test_memory_md_refreshes_after_context_compaction(tmp_path: Path) -> N
     assert response.content == "done after compaction"
     retry_messages = fake_client.chat.completions.calls[-1]["messages"]
     system_text = "\n".join(str(message["content"]) for message in retry_messages if message["role"] == "system")
-    assert "Cached MEMORY.md snapshot:\nchanged memory" in system_text
+    assert "Cached context/MEMORY.md snapshot:\nchanged memory" in system_text
     assert "initial memory" not in system_text
 
 
@@ -290,8 +290,8 @@ async def test_context_files_refresh_after_context_compaction(tmp_path: Path) ->
     assert response.content == "done after compaction"
     retry_messages = fake_client.chat.completions.calls[-1]["messages"]
     system_text = "\n".join(str(message["content"]) for message in retry_messages if message["role"] == "system")
-    assert "TOOLS.md:\nchanged tools" in system_text
-    assert "TOOLS.md:\ninitial tools" not in system_text
+    assert "context/TOOLS.md:\nchanged tools" in system_text
+    assert "context/TOOLS.md:\ninitial tools" not in system_text
 
 
 @pytest.mark.asyncio

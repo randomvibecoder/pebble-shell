@@ -12,7 +12,7 @@ def test_context_loader_does_not_load_heartbeat_md(tmp_path: Path) -> None:
     messages = ContextFileLoader(tmp_path, tmp_path).load()
     contents = [message["content"] for message in messages]
 
-    assert any(content.startswith("SOUL.md:") for content in contents)
+    assert any(content.startswith("context/SOUL.md:") for content in contents)
     assert not any(content.startswith("HEARTBEAT.md:") for content in contents)
     assert not any(content.startswith("MEMORY.md:") for content in contents)
 
@@ -26,12 +26,12 @@ def test_context_loader_caches_until_refresh(tmp_path: Path) -> None:
 
     tools_path.write_text("new tools", encoding="utf-8")
 
-    assert any(message["content"] == "TOOLS.md:\nold tools" for message in loader.load())
-    assert not any(message["content"] == "TOOLS.md:\nnew tools" for message in loader.load())
+    assert any(message["content"] == "context/TOOLS.md:\nold tools" for message in loader.load())
+    assert not any(message["content"] == "context/TOOLS.md:\nnew tools" for message in loader.load())
 
     loader.refresh()
 
-    assert any(message["content"] == "TOOLS.md:\nnew tools" for message in loader.load())
+    assert any(message["content"] == "context/TOOLS.md:\nnew tools" for message in loader.load())
 
 
 def test_workspace_context_files_are_seeded_from_bundled_defaults(tmp_path: Path) -> None:

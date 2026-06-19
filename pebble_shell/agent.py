@@ -601,7 +601,7 @@ class CodingAgent:
     def _memory_md_message(self) -> dict[str, object] | None:
         if not self._memory_md_snapshot:
             return None
-        return {"role": "system", "content": f"Cached MEMORY.md snapshot:\n{self._memory_md_snapshot}"}
+        return {"role": "system", "content": f"Cached context/MEMORY.md snapshot:\n{self._memory_md_snapshot}"}
 
     def _format_onboarding(self, context: MemoryContext, source: str) -> str:
         if source != "user" or context.summary or context.recent_messages:
@@ -895,12 +895,16 @@ def _is_compaction_summary_message(message: dict[str, object]) -> bool:
 
 
 def _is_memory_md_message(message: dict[str, object]) -> bool:
-    return str(message.get("content", "")).startswith("Cached MEMORY.md snapshot:")
+    content = str(message.get("content", ""))
+    return content.startswith("Cached context/MEMORY.md snapshot:") or content.startswith("Cached MEMORY.md snapshot:")
 
 
 def _is_context_file_message(message: dict[str, object]) -> bool:
     content = str(message.get("content", ""))
-    return any(content.startswith(f"{name}:\n") for name in CONTEXT_FILES)
+    return any(
+        content.startswith(f"context/{name}:\n") or content.startswith(f"{name}:\n")
+        for name in CONTEXT_FILES
+    )
 
 
 def _compaction_summary_content(background_job_id: str | None, summary: str) -> str:

@@ -26,7 +26,7 @@ class ContextFileLoader:
         for name in CONTEXT_FILES:
             content = self._read_first(name)
             if content:
-                blocks.append({"role": "system", "content": f"{name}:\n{content}"})
+                blocks.append({"role": "system", "content": f"{CONTEXT_DIR}/{name}:\n{content}"})
         return blocks
 
     def _read_first(self, name: str) -> str:
