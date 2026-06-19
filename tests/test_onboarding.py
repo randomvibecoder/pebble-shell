@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 from typing import Any
 
@@ -188,6 +189,18 @@ def test_dump_next_heartbeat_context_writes_exact_chat_completion_kwargs(tmp_pat
     assert "read_file" in payload["messages"][-1]["content"]
     assert "context/HEARTBEAT.md" in payload["messages"][-1]["content"]
     assert "SECRET HEARTBEAT BODY" not in str(payload["messages"])
+
+
+def test_heartbeat_prompt_includes_current_utc_time(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+
+    prompt = agent._heartbeat_prompt()
+
+    assert re.match(
+        r"^This is a heartbeat turn\. The time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\. "
+        r"First call read_file with path context/HEARTBEAT\.md\.",
+        prompt,
+    )
 
 
 @pytest.mark.asyncio

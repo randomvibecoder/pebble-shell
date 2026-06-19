@@ -573,7 +573,8 @@ class CodingAgent:
         return HeartbeatResponse(content=content, should_notify=should_notify, steps=response.steps)
 
     def _heartbeat_prompt(self) -> str:
-        return self.settings.heartbeat_prompt
+        utc_now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return f"This is a heartbeat turn. The time is {utc_now}. {self.settings.heartbeat_prompt}"
 
     def _read_memory_md(self) -> str:
         path = next(
