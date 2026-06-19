@@ -9,6 +9,7 @@ import pytest
 
 from pebble_shell.agent import CodingAgent
 from pebble_shell.agent import ImageInput
+from pebble_shell.agent import SYSTEM_PROMPT
 from pebble_shell.config import Settings
 
 
@@ -201,6 +202,15 @@ def test_heartbeat_prompt_includes_current_utc_time(tmp_path: Path) -> None:
         r"First call read_file with path context/HEARTBEAT\.md\.",
         prompt,
     )
+
+
+def test_system_prompt_defines_heartbeat() -> None:
+    assert "A heartbeat is an automatic periodic internal turn started by the harness" in SYSTEM_PROMPT
+    assert "not a direct user message" in SYSTEM_PROMPT
+    assert "The time is YYYY-MM-DD HH:MM:SS UTC" in SYSTEM_PROMPT
+    assert "first call read_file with path context/HEARTBEAT.md" in SYSTEM_PROMPT
+    assert "HEARTBEAT_OK means there is no user-visible update" in SYSTEM_PROMPT
+    assert "The harness suppresses HEARTBEAT_OK" in SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio
