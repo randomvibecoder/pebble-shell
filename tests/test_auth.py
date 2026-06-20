@@ -36,11 +36,6 @@ class FakeRuntimeConfig:
         return {"openai_model": "runtime/model", "heartbeat_every_seconds": "3600"}
 
 
-class FakeSkills:
-    def list(self) -> list[str]:
-        return ["SKILLS", "playwright-cli"]
-
-
 class FakeCron:
     def list_jobs(self) -> list[dict[str, object]]:
         return [{"name": "daily", "enabled": True}, {"name": "paused", "enabled": False}]
@@ -79,7 +74,6 @@ class FakeBackgroundStore:
 
 class FakeStatusAgent:
     runtime_config = FakeRuntimeConfig()
-    skills = FakeSkills()
     cron = FakeCron()
     self_improvement = FakeSelfImprovement()
     tools = FakeTools()
@@ -178,7 +172,6 @@ def test_status_reports_runtime_without_secrets(monkeypatch) -> None:
     assert payload["discord"]["interactions_enabled"] is True
     assert payload["discord"]["client_secret_configured"] is True
     assert payload["security"]["api_auth_enabled"] is True
-    assert payload["skills"] == ["SKILLS", "playwright-cli"]
     assert payload["processes"] == [{"name": "web-dev", "running": True, "pid": 1234}]
     assert payload["background_tasks"]["active_count"] == 2
     assert payload["background_tasks"]["recent"][0]["id"] == "bg_test"

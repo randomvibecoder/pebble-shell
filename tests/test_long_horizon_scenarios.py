@@ -13,7 +13,6 @@ from pebble_shell.heartbeat import HeartbeatRunner
 from pebble_shell.memory import MemoryStore
 from pebble_shell.runtime_config import RuntimeConfigStore
 from pebble_shell.self_improvement import SelfImprovementStore
-from pebble_shell.skills import SkillLoader
 from pebble_shell.tools import WorkspaceTools
 
 
@@ -50,12 +49,10 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
     self_improvement = SelfImprovementStore(tmp_path / "self.sqlite3")
     cron = CronStore(tmp_path / "cron.sqlite3")
     shell_audit = ShellAuditStore(tmp_path / "shell.sqlite3")
-    skills = SkillLoader(workspace, tmp_path)
     tools = WorkspaceTools(
         workspace,
         shell_timeout_seconds=1,
         runtime_config=runtime,
-        skills=skills,
         self_improvement=self_improvement,
         cron=cron,
         shell_audit=shell_audit,
@@ -63,7 +60,6 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
     )
 
     assert tools.set_runtime_config("heartbeat_every_seconds", "3600").ok
-    assert tools.skill_save("incident-review", "Always check incident.md before proposing recovery.", "incident workflow").ok
     assert tools.webhook_hook_save("email-alert", "Triage the incoming email payload.").ok
     assert tools.cron_job_save("daily-check", "Review outstanding state.", 86_400).ok
     assert tools.write_file("context/MEMORY.md", "The recovery owner is platform-oncall.").ok

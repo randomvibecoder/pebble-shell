@@ -23,9 +23,6 @@
 - `background_task_status`, `background_tasks_list`, `background_task_events`, `background_task_ask`, `background_task_message`, and `background_task_cancel` inspect, question, resume, redirect, or cancel specific workers.
 - Background workers edit their own `/workspace/background_jobs/{job_id}/` folder by default and do not have heartbeat behavior.
 - `set_runtime_config` persists safe runtime changes such as model and heartbeat interval.
-- `skill_save` creates procedural memory the agent can load later.
-- `skill_install` installs a local workspace skill file after the agent has inspected it. Download remote skill files to the workspace first, read/review them, then install the local path.
-- `skill_disable`, `skill_enable`, and `skill_delete` unload, reload, or remove skills. Bundled skills can be disabled but not deleted by the agent.
 - `webhook_hook_save` registers external event hooks such as email/webhook triggers.
 - `self_improvements_list` shows recent self-improvements, hooks, and webhook activity.
 - `webhook_events_list` inspects recent webhook receipts and processing status, useful for heartbeat checks on suggestion boxes and other event-backed workflows.

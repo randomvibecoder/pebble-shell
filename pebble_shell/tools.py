@@ -22,7 +22,6 @@ from .process_manager import BackgroundProcessManager
 from .public_sites import list_public_sites
 from .runtime_config import RuntimeConfigStore
 from .self_improvement import SelfImprovementStore
-from .skills import SkillLoader
 
 MAX_READ_FILE_BYTES = 40_000
 MAX_READ_FILE_CHARS = 40_000
@@ -44,7 +43,6 @@ class WorkspaceTools:
         root: Path,
         shell_timeout_seconds: int,
         runtime_config: RuntimeConfigStore | None = None,
-        skills: SkillLoader | None = None,
         self_improvement: SelfImprovementStore | None = None,
         cron: CronStore | None = None,
         shell_audit: ShellAuditStore | None = None,
@@ -66,7 +64,6 @@ class WorkspaceTools:
         self.root.mkdir(parents=True, exist_ok=True)
         self.shell_timeout_seconds = shell_timeout_seconds
         self.runtime_config = runtime_config
-        self.skills = skills
         self.self_improvement = self_improvement
         self.cron = cron
         self.shell_audit = shell_audit
@@ -346,94 +343,6 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "skills_list",
-                    "description": "List available skill documents, including enabled/disabled state.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_view",
-                    "description": "Load one skill document by name.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["name"],
-                        "properties": {"name": {"type": "string"}},
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_save",
-                    "description": "Create or update a workspace skill as procedural memory for future turns.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["name", "content"],
-                        "properties": {
-                            "name": {"type": "string"},
-                            "content": {"type": "string"},
-                            "description": {"type": "string"},
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_install",
-                    "description": "Install a local workspace skill file into workspace skills for future turns. Inspect the file first with read_file or shell before calling this tool.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["path"],
-                        "properties": {
-                            "path": {"type": "string", "description": "Workspace-relative path to a .md, .txt, or SKILL.md file."},
-                            "name": {"type": "string", "description": "Optional override for the saved skill name."},
-                            "description": {"type": "string"},
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_disable",
-                    "description": "Disable a skill without deleting it. Disabled skills are not loaded until re-enabled.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["name"],
-                        "properties": {"name": {"type": "string"}},
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_enable",
-                    "description": "Re-enable a previously disabled skill.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["name"],
-                        "properties": {"name": {"type": "string"}},
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill_delete",
-                    "description": "Delete a workspace-installed skill. Bundled skills cannot be deleted; disable them instead.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["name"],
-                        "properties": {"name": {"type": "string"}},
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
                     "name": "webhook_hook_save",
                     "description": "Create or update a named webhook hook. POST /webhooks/{name} triggers an agent run with the hook prompt and JSON payload in this chat.",
                     "parameters": {
@@ -570,20 +479,6 @@ class WorkspaceTools:
                 return self.get_runtime_config()
             if name == "set_runtime_config":
                 return self.set_runtime_config(arguments["key"], arguments["value"])
-            if name == "skills_list":
-                return self.skills_list()
-            if name == "skill_view":
-                return self.skill_view(arguments["name"])
-            if name == "skill_save":
-                return self.skill_save(arguments["name"], arguments["content"], arguments.get("description", ""))
-            if name == "skill_install":
-                return self.skill_install(arguments["path"], arguments.get("name"), arguments.get("description", ""))
-            if name == "skill_disable":
-                return self.skill_disable(arguments["name"])
-            if name == "skill_enable":
-                return self.skill_enable(arguments["name"])
-            if name == "skill_delete":
-                return self.skill_delete(arguments["name"])
             if name == "webhook_hook_save":
                 return self.webhook_hook_save(arguments["name"], arguments["prompt"])
             if name == "self_improvements_list":
@@ -940,80 +835,6 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Runtime config store is not enabled")
         self.runtime_config.set(key, value)
         return ToolResult(ok=True, output=f"Set {key}={value}")
-
-    def skills_list(self) -> ToolResult:
-        if not self.skills:
-            return ToolResult(ok=False, output="Skill loader is not enabled")
-        return ToolResult(ok=True, output=json.dumps(self.skills.list_details(), sort_keys=True))
-
-    def skill_view(self, name: str) -> ToolResult:
-        if not self.skills:
-            return ToolResult(ok=False, output="Skill loader is not enabled")
-        try:
-            return ToolResult(ok=True, output=self.skills.view(name))
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
-
-    def skill_save(self, name: str, content: str, description: str = "") -> ToolResult:
-        if not self.skills:
-            return ToolResult(ok=False, output="Skill loader is not enabled")
-        path = self.skills.save(name, content)
-        if self.self_improvement:
-            self.self_improvement.record("skill", path.stem, description or f"Saved skill {path.stem}", {"path": str(path)})
-        return ToolResult(ok=True, output=f"Saved skill {path.stem} to {path.relative_to(self.root)}")
-
-    def skill_install(self, path: str, name: str | None = None, description: str = "") -> ToolResult:
-        if not self.skills:
-            return ToolResult(ok=False, output="Skill loader is not enabled")
-        try:
-            source = self._resolve(path)
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
-        try:
-            installed = self.skills.install_from_path(source, name)
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
-        if self.self_improvement:
-            self.self_improvement.record(
-                "skill_install",
-                installed.stem,
-                description or f"Installed skill {installed.stem} from local path",
-                {"path": str(installed), "source_path": str(source)},
-            )
-        return ToolResult(ok=True, output=f"Installed skill {installed.stem} to {installed.relative_to(self.root)}")
-
-    def skill_disable(self, name: str) -> ToolResult:
-        if not self.skills:
-            return ToolResult(ok=False, output="Skill loader is not enabled")
-        try:
-            normalized = self.skills.disable(name)
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
-        if self.self_improvement:
-            self.self_improvement.record("skill_disable", normalized, f"Disabled skill {normalized}", {"name": normalized})
-        return ToolResult(ok=True, output=f"Disabled skill {normalized}")
-
-    def skill_enable(self, name: str) -> ToolResult:
-        if not self.skills:
-            return ToolResult(ok=False, output="Skill loader is not enabled")
-        try:
-            normalized = self.skills.enable(name)
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
-        if self.self_improvement:
-            self.self_improvement.record("skill_enable", normalized, f"Enabled skill {normalized}", {"name": normalized})
-        return ToolResult(ok=True, output=f"Enabled skill {normalized}")
-
-    def skill_delete(self, name: str) -> ToolResult:
-        if not self.skills:
-            return ToolResult(ok=False, output="Skill loader is not enabled")
-        try:
-            normalized = self.skills.delete(name)
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
-        if self.self_improvement:
-            self.self_improvement.record("skill_delete", normalized, f"Deleted skill {normalized}", {"name": normalized})
-        return ToolResult(ok=True, output=f"Deleted skill {normalized}")
 
     def webhook_hook_save(self, name: str, prompt: str) -> ToolResult:
         if not self.self_improvement:

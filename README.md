@@ -109,10 +109,6 @@ Each worker gets a folder at `/workspace/background_jobs/{job_id}/` and is instr
 
 The agent can improve itself through bounded, auditable primitives:
 
-- `skill_save`: persist a new procedural skill under `/workspace/skills`.
-- `skill_install`: install a local workspace `SKILL.md`, `.md`, or `.txt` file into `/workspace/skills` after inspecting it.
-- `skill_disable` / `skill_enable`: unload or reload a skill without deleting it.
-- `skill_delete`: delete a workspace-installed skill. Bundled skills can be disabled but not deleted by the agent.
 - `context/MEMORY.md`: durable self-memory maintained with normal file tools.
 - `webhook_hook_save`: register a named webhook, for example an email event hook.
 - `set_runtime_config`: change safe runtime settings like model or heartbeat interval.
@@ -141,7 +137,7 @@ The agent keeps three layers of context:
 - Recent exact messages for the primary chat, bounded by both `RECENT_MESSAGE_LIMIT` and `RECENT_MESSAGE_TOKEN_BUDGET`.
 - Reactive summaries when a foreground or background model call hits a provider context-length limit.
 
-The system prompt, repository context files from `context/`, relevant skills, cached `context/MEMORY.md`, and newest user request are placed in context. Pebble Shell keeps a large exact message window by default (`RECENT_MESSAGE_LIMIT=1000`, `RECENT_MESSAGE_TOKEN_BUDGET=0`) so the model can use its available context. During an active foreground or background run, Pebble Shell keeps using the full assembled context until the provider returns a context-length error; then it summarizes older non-system conversation/tool history, refreshes `context/MEMORY.md`, keeps the newest exact messages, reappends the current message/tool result, retries, and sends `[compacted]` to the active Discord transport for debugging.
+The system prompt, repository context files from `context/`, cached `context/MEMORY.md`, and newest user request are placed in context. Pebble Shell keeps a large exact message window by default (`RECENT_MESSAGE_LIMIT=1000`, `RECENT_MESSAGE_TOKEN_BUDGET=0`) so the model can use its available context. During an active foreground or background run, Pebble Shell keeps using the full assembled context until the provider returns a context-length error; then it summarizes older non-system conversation/tool history, refreshes `context/MEMORY.md`, keeps the newest exact messages, reappends the current message/tool result, retries, and sends `[compacted]` to the active Discord transport for debugging.
 
 To remember stable preferences or operating notes, the agent edits `context/MEMORY.md` with normal file tools. If `context/MEMORY.md` changes during a turn, the current cached prompt snapshot does not change until compaction or restart, which keeps most prompt prefixes cacheable.
 
@@ -149,7 +145,7 @@ On first contact in the chat, the agent is prompted to ask a few lightweight que
 
 ## Tool Strategy
 
-The default integration style is CLI-first inside Docker. The agent should discover tools with `--help` or project skills, prefer dry runs and JSON output, and compose commands through normal Unix pipelines. This keeps prompt context small compared with preloading large external tool schemas. MCP-style integrations can still be added later for compliance-sensitive or multi-tenant APIs where governance is worth the extra context overhead.
+The default integration style is CLI-first inside Docker. The agent should discover tools with `--help`, prefer dry runs and JSON output, and compose commands through normal Unix pipelines. This keeps prompt context small compared with preloading large external tool schemas. MCP-style integrations can still be added later for compliance-sensitive or multi-tenant APIs where governance is worth the extra context overhead.
 
 ## Shell Execution
 
@@ -164,7 +160,6 @@ context/
   AGENTS.md
   HEARTBEAT.md
   MEMORY.md
-  SKILLS.md
   SOUL.md
   TOOLS.md
   USER.md

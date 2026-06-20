@@ -371,6 +371,10 @@ def test_db_memory_tools_are_not_exposed(tmp_path: Path) -> None:
     assert "record_memory" not in names
     assert "memory_index_file" not in names
     assert "memory_search" not in names
+    assert "skills_list" not in names
+    assert "skill_save" not in names
+    assert "skill_install" not in names
     assert not tools.run("record_memory", {"memory": "User prefers concise answers."}).ok
     assert not tools.run("memory_index_file", {"path": "runbook.md"}).ok
     assert not tools.run("memory_search", {"query": "anything"}).ok
+    assert not tools.run("skills_list", {}).ok

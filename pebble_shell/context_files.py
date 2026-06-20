@@ -5,7 +5,7 @@ from pathlib import Path
 
 CONTEXT_DIR = "context"
 CONTEXT_FILES = ("SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md")
-WORKSPACE_CONTEXT_FILES = (*CONTEXT_FILES, "SKILLS.md", "HEARTBEAT.md", "MEMORY.md")
+WORKSPACE_CONTEXT_FILES = (*CONTEXT_FILES, "HEARTBEAT.md", "MEMORY.md")
 
 
 class ContextFileLoader:

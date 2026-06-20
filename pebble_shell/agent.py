@@ -21,7 +21,6 @@ from .shell_audit import ShellAuditStore
 from .memory import MemoryContext, MemoryStore
 from .runtime_config import RuntimeConfigStore
 from .self_improvement import SelfImprovementStore
-from .skills import SkillLoader
 from .tools import WorkspaceTools
 
 
@@ -53,7 +52,6 @@ Tool use:
 - Use send_file_to_user after creating a user-requested downloadable artifact such as a PDF, report, image, or archive.
 - Use webhook_hook_save and webhook_events_list for event-backed workflows such as suggestion boxes or email hooks.
 - Use cron_job_save for specific recurring automations; use heartbeat for broad periodic awareness.
-- Use skills_list, skill_view, skill_save, skill_install, skill_disable, skill_enable, and skill_delete for procedural self-improvement. Before installing a skill, inspect the candidate skill file with read_file or shell, summarize what it does, and only then call skill_install with the local workspace path.
 - Use set_runtime_config for user-requested model or heartbeat interval changes.
 - Durable self-memory lives in context/MEMORY.md. Use read_file, edit_file, write_file, or apply_patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
 
@@ -180,7 +178,6 @@ class CodingAgent:
         self.self_improvement = SelfImprovementStore(settings.self_improvement_db_path)
         self.cron = CronStore(settings.cron_db_path)
         self.shell_audit = ShellAuditStore(settings.shell_audit_db_path)
-        self.skills = SkillLoader(settings.agent_workspace, bundled_root)
         self.memory = MemoryStore(settings.memory_db_path)
         self._inbox_lock = asyncio.Lock()
         self._active_inbox: list[QueuedUserMessage] | None = None
@@ -191,7 +188,6 @@ class CodingAgent:
             settings.agent_workspace,
             settings.shell_timeout_seconds,
             self.runtime_config,
-            self.skills,
             self.self_improvement,
             self.cron,
             self.shell_audit,
@@ -287,12 +283,7 @@ class CodingAgent:
         memory_md = self._memory_md_message()
         if memory_md:
             messages.append(memory_md)
-        messages.extend(
-            [
-                {"role": "system", "content": self.skills.load(content)},
-                {"role": "system", "content": self._format_onboarding(memory_context, source)},
-            ]
-        )
+        messages.append({"role": "system", "content": self._format_onboarding(memory_context, source)})
         messages.extend(_recent_messages_as_native_roles(memory_context))
         messages.append(user_message)
         image_message_indexes: dict[int, str] = {}

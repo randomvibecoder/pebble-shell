@@ -114,7 +114,6 @@ async def status(request: Request) -> dict[str, Any]:
             "api_auth_enabled": bool(settings.api_auth_token),
             "shell_policy": "all_commands_allowed_in_container",
         },
-        "skills": agent.skills.list(),
         "public_sites": list_public_sites(settings.agent_workspace),
         "processes": agent.tools.processes.list(),
         "background_tasks": {
