@@ -18,7 +18,7 @@ from .config import Settings
 from .context_files import CONTEXT_FILES, ContextFileLoader, context_file_candidates, ensure_workspace_context_files
 from .cron import CronStore
 from .shell_audit import ShellAuditStore
-from .memory import MemoryContext, MemoryStore
+from .memory import MemoryStore
 from .runtime_config import RuntimeConfigStore
 from .self_improvement import SelfImprovementStore
 from .tools import WorkspaceTools
@@ -283,7 +283,6 @@ class CodingAgent:
         memory_md = self._memory_md_message()
         if memory_md:
             messages.append(memory_md)
-        messages.append({"role": "system", "content": self._format_onboarding(memory_context, source)})
         messages.extend(_recent_messages_as_native_roles(memory_context))
         messages.append(user_message)
         image_message_indexes: dict[int, str] = {}
@@ -602,17 +601,6 @@ class CodingAgent:
         if not self._memory_md_snapshot:
             return None
         return {"role": "system", "content": f"Cached context/MEMORY.md snapshot:\n{self._memory_md_snapshot}"}
-
-    def _format_onboarding(self, context: MemoryContext, source: str) -> str:
-        if source != "user" or context.summary or context.recent_messages:
-            return "First-contact onboarding: not needed for this turn."
-        return (
-            "First-contact onboarding: this chat has no prior conversation memory. "
-            "Briefly introduce yourself, ask 2-3 lightweight questions about the user's hobbies, interests, work style, "
-            "and what they want you to remember. If the user shares durable facts or preferences, write them to context/MEMORY.md "
-            "with file tools. Then handle any urgent concrete request with a small first step. "
-            "Keep it natural."
-        )
 
     async def _remember_turn(
         self,

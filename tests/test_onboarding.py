@@ -112,7 +112,7 @@ class EmptyThenEmptyClient:
 
 
 @pytest.mark.asyncio
-async def test_first_contact_onboarding_prompt_is_included(tmp_path: Path) -> None:
+async def test_initial_onboarding_instruction_comes_from_user_context_file(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     fake_client = FakeClient()
     agent.client = fake_client  # type: ignore[assignment]
@@ -120,7 +120,8 @@ async def test_first_contact_onboarding_prompt_is_included(tmp_path: Path) -> No
     await agent.run_user_message("hello")
 
     system_messages = [message["content"] for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system"]
-    assert any("First-contact onboarding: this chat has no prior conversation memory" in str(message) for message in system_messages)
+    assert not any("First-contact onboarding:" in str(message) for message in system_messages)
+    assert any(str(message).startswith("context/USER.md:") and "Initial onboarding:" in str(message) for message in system_messages)
     assert any("hobbies" in str(message) for message in system_messages)
 
 
@@ -142,7 +143,7 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_first_contact_onboarding_prompt_is_suppressed_when_memory_exists(tmp_path: Path) -> None:
+async def test_generated_onboarding_prompt_is_not_injected_when_memory_exists(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     agent.memory.add_message("user", "previous hello")
     fake_client = FakeClient()
@@ -151,8 +152,7 @@ async def test_first_contact_onboarding_prompt_is_suppressed_when_memory_exists(
     await agent.run_user_message("hello again")
 
     system_messages = [message["content"] for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "system"]
-    assert any("First-contact onboarding: not needed" in str(message) for message in system_messages)
-    assert not any("this channel has no prior conversation memory" in str(message) for message in system_messages)
+    assert not any("First-contact onboarding:" in str(message) for message in system_messages)
 
 
 @pytest.mark.asyncio
