@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from pebble_shell.agent import CodingAgent
+from pebble_shell.agent import _split_history_indexes_by_token_weight
 from pebble_shell.config import Settings
 
 
@@ -18,8 +19,18 @@ class FakeChoice:
 
 
 class FakeResponse:
-    def __init__(self, message: object) -> None:
+    def __init__(self, message: object, prompt_tokens: int | None = None, completion_tokens: int | None = None) -> None:
         self.choices = [FakeChoice(message)]
+        if prompt_tokens is not None or completion_tokens is not None:
+            self.usage = type(
+                "Usage",
+                (),
+                {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": (prompt_tokens or 0) + (completion_tokens or 0),
+                },
+            )()
 
 
 class FinalMessage:
@@ -149,6 +160,51 @@ async def test_background_worker_persists_summary_and_notifies_after_context_err
     context = agent.background_store.get_context(job.id)
     assert any("Background job compacted summary" in str(message.get("content")) for message in context)
     assert any(event["kind"] == "summary" for event in agent.background_store.list_events(job.id, limit=10))
+
+
+@pytest.mark.asyncio
+async def test_compaction_notice_uses_provider_summary_usage_when_available(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    delivered: list[str] = []
+
+    async def deliver(text: str) -> None:
+        delivered.append(text)
+
+    agent.set_deliver(deliver)
+    agent.client = FakeClient(
+        [
+            FakeResponse(ToolMessage("list_files", {"path": "."})),
+            RuntimeError("context_length_exceeded: prompt is too long"),
+            FakeResponse(
+                FinalMessage("Detailed summary of the compacted foreground conversation and tool result."),
+                prompt_tokens=1234,
+                completion_tokens=234,
+            ),
+            FakeResponse(FinalMessage("Done after compaction.")),
+        ]
+    )  # type: ignore[assignment]
+
+    await agent.run_user_message("inspect the workspace")
+
+    assert delivered == ["[compacted 1234 tokens to 234 tokens]"]
+
+
+def test_compaction_split_is_weighted_by_message_tokens() -> None:
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "tiny"},
+        {"role": "assistant", "content": "x" * 2000},
+        {"role": "user", "content": "recent"},
+        {"role": "assistant", "content": "recent"},
+        {"role": "user", "content": "recent"},
+        {"role": "assistant", "content": "recent"},
+        {"role": "tool", "tool_call_id": "call-1", "content": "recent"},
+    ]
+
+    summarized, recent = _split_history_indexes_by_token_weight(list(range(1, len(messages))), messages, min_recent=2)
+
+    assert summarized == [1, 2]
+    assert recent == [3, 4, 5, 6, 7]
 
 
 def _agent(tmp_path: Path) -> CodingAgent:

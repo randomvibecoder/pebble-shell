@@ -546,7 +546,7 @@ class BackgroundTaskService:
             },
         ]
         try:
-            response = await self.agent._chat_completion(messages=messages, tool_choice="none")
+            response = await self.agent._chat_completion(messages=messages, tool_choice="none", source=f"background:{job.id}")
             return response.choices[0].message.content or ""
         except Exception:
             return await self._ask_chunked(job, context, question)
@@ -564,6 +564,7 @@ class BackgroundTaskService:
                     {"role": "user", "content": f"Question: {question}\n\nChunk {index}/{len(chunks)}:\n{chunk}"},
                 ],
                 tool_choice="none",
+                source=f"background:{job.id}",
             )
             extracts.append(response.choices[0].message.content or "")
         response = await self.agent._chat_completion(
@@ -572,6 +573,7 @@ class BackgroundTaskService:
                 {"role": "user", "content": f"Job {job.id}: {job.title}\nQuestion: {question}\n\nExtracts:\n" + "\n\n".join(extracts)},
             ],
             tool_choice="none",
+            source=f"background:{job.id}",
         )
         return response.choices[0].message.content or ""
 
@@ -698,6 +700,7 @@ class BackgroundTaskService:
             messages=context,
             tool_choice="none",
             background_job_id=job_id,
+            source=f"background:{job_id}",
         )
         decision = _normalize_self_check(response.choices[0].message.content or "")
         context.append({"role": "assistant", "content": decision})
