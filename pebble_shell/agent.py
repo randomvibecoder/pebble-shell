@@ -283,6 +283,8 @@ class CodingAgent:
         memory_md = self._memory_md_message()
         if memory_md:
             messages.append(memory_md)
+        if memory_context.summary:
+            messages.append({"role": "system", "content": _compaction_summary_content(None, memory_context.summary)})
         messages.extend(_recent_messages_as_native_roles(memory_context))
         messages.append(user_message)
         image_message_indexes: dict[int, str] = {}

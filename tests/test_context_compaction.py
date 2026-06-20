@@ -189,6 +189,45 @@ async def test_compaction_notice_uses_provider_summary_usage_when_available(tmp_
     assert delivered == ["[compacted 1234 tokens to 234 tokens]"]
 
 
+def test_persisted_foreground_summary_is_included_in_future_payloads(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    agent.memory.add_message("user", "older user detail")
+    agent.memory.add_message("assistant", "older assistant detail")
+    agent.memory.add_message("user", "recent user detail")
+    agent.memory.upsert_summary("Durable compacted facts about older user work.", 2)
+
+    payload = agent.build_chat_completion_payload("what do you remember?")
+    messages = payload["messages"]
+
+    assert any(
+        message.get("role") == "system"
+        and message.get("content") == "Active foreground compacted summary:\nDurable compacted facts about older user work."
+        for message in messages
+    )
+    assert not any(message.get("content") == "older user detail" for message in messages)
+    assert not any(message.get("content") == "older assistant detail" for message in messages)
+    assert any(message.get("role") == "user" and message.get("content") == "recent user detail" for message in messages)
+
+
+def test_dump_next_heartbeat_context_includes_persisted_summary(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    agent.memory.add_message("user", "older user detail")
+    agent.memory.add_message("assistant", "older assistant detail")
+    agent.memory.add_message("user", "recent user detail")
+    agent.memory.upsert_summary("Durable compacted facts for heartbeat dump.", 2)
+
+    path = agent.dump_next_heartbeat_context()
+    dumped = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+    assert any(
+        message.get("role") == "system"
+        and message.get("content") == "Active foreground compacted summary:\nDurable compacted facts for heartbeat dump."
+        for message in dumped
+    )
+    assert dumped[-1]["role"] == "user"
+    assert "This is a heartbeat turn." in str(dumped[-1]["content"])
+
+
 def test_compaction_split_is_weighted_by_message_tokens() -> None:
     messages = [
         {"role": "system", "content": "system"},
