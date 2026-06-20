@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     openai_fallback_models: str = "claude-haiku-4-5-20251001"
     openai_flash_model: str = "xiaomi/mimo-v2.5:thinking"
     openai_flash_fallback_models: str = "claude-haiku-4-5-20251001"
+    openai_model_input_token_limits: str = "xiaomi/mimo-v2.5-pro:thinking=50000,xiaomi/mimo-v2.5:thinking=50000"
     api_auth_token: str = Field(default="", repr=False)
     exa_api_key: str = Field(default="", repr=False)
     exa_base_url: str = "https://api.exa.ai"

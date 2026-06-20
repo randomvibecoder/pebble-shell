@@ -412,6 +412,7 @@ class CodingAgent:
             response = await self._chat_completion_with_context_retry(
                 messages=messages,
                 background_job_id=background_job_id,
+                source=_log_source_kind(source),
                 tools=self.tools.definitions(include_background_tools=include_background_tools),
                 tool_choice="auto",
             )
@@ -482,6 +483,7 @@ class CodingAgent:
                         recovery = await self._chat_completion_with_context_retry(
                             messages=messages,
                             background_job_id=background_job_id,
+                            source=_log_source_kind(source),
                             tool_choice="none",
                         )
                         recovery_message = recovery.choices[0].message
@@ -547,6 +549,7 @@ class CodingAgent:
             response = await self._chat_completion_with_context_retry(
                 messages=messages,
                 background_job_id=background_job_id,
+                source=_log_source_kind(source),
                 tool_choice="none",
             )
             final = (response.choices[0].message.content or "").strip() or final
@@ -650,11 +653,12 @@ class CodingAgent:
         self,
         messages: list[dict[str, object]],
         background_job_id: str | None,
+        source: str = "unknown",
         **kwargs: Any,
     ) -> Any:
         for attempt in range(3):
             try:
-                return await self._chat_completion(messages=messages, background_job_id=background_job_id, **kwargs)  # type: ignore[arg-type]
+                return await self._chat_completion(messages=messages, background_job_id=background_job_id, source=source, **kwargs)  # type: ignore[arg-type]
             except Exception as exc:  # noqa: BLE001 - context compaction should inspect provider errors.
                 if not _is_context_length_error(exc) or attempt == 2:
                     raise
@@ -681,14 +685,7 @@ class CodingAgent:
         if not history_indexes:
             return False
 
-        min_recent = 5
-        recent_count = max(min_recent, int(len(history_indexes) * 0.4))
-        if len(history_indexes) <= recent_count:
-            summarize_indexes = history_indexes[: max(1, len(history_indexes) - 1)]
-            recent_indexes = history_indexes[len(summarize_indexes) :]
-        else:
-            summarize_indexes = history_indexes[: len(history_indexes) - recent_count]
-            recent_indexes = history_indexes[len(history_indexes) - recent_count :]
+        summarize_indexes, recent_indexes = _split_history_indexes_by_token_weight(history_indexes, messages)
         if not summarize_indexes:
             return False
 
@@ -753,6 +750,7 @@ class CodingAgent:
         response = await self._chat_completion(
             messages=self._build_summarizer_messages(prior_summary, messages, background_job_id),
             tool_choice="none",
+            source="summary",
         )
         summary = response.choices[0].message.content or prior_summary or "(summary unavailable)"
         return summary, _usage_value(response, "prompt_tokens"), _usage_value(response, "completion_tokens")
@@ -825,24 +823,58 @@ class CodingAgent:
     async def _chat_completion(self, **kwargs: Any) -> Any:
         model_override = kwargs.pop("model_override", None)
         background_job_id = kwargs.pop("background_job_id", None)
+        source = kwargs.pop("source", "unknown")
         errors: list[str] = []
         for model in self.candidate_models(model_override):
-            try:
-                response = await self.client.chat.completions.create(model=model, **kwargs)
-                if background_job_id:
-                    self.background_store.record_model_usage(
-                        background_job_id,
+            backoffs = [1, 2]
+            for attempt in range(len(backoffs) + 1):
+                try:
+                    self._raise_if_model_input_cap_exceeded(model, kwargs)
+                    response = await self.client.chat.completions.create(model=model, **kwargs)
+                    prompt_tokens = _usage_value(response, "prompt_tokens")
+                    completion_tokens = _usage_value(response, "completion_tokens")
+                    total_tokens = _usage_value(response, "total_tokens")
+                    cached_tokens = _usage_detail_value(response, "prompt_tokens_details", "cached_tokens")
+                    reasoning_tokens = _usage_detail_value(response, "completion_tokens_details", "reasoning_tokens") or _usage_value(response, "reasoning_tokens")
+                    image_tokens = _usage_detail_value(response, "prompt_tokens_details", "image_tokens")
+                    self.memory.record_model_call(
+                        source,
                         model,
-                        _usage_value(response, "prompt_tokens"),
-                        _usage_value(response, "completion_tokens"),
-                        _usage_value(response, "total_tokens"),
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                        cached_tokens,
+                        reasoning_tokens,
+                        image_tokens,
                     )
-                return response
-            except Exception as exc:  # noqa: BLE001 - fallback should preserve provider error context.
-                if _is_context_length_error(exc):
-                    raise
-                errors.append(f"{model}: {exc}")
+                    if background_job_id:
+                        self.background_store.record_model_usage(
+                            background_job_id,
+                            model,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
+                        )
+                    return response
+                except Exception as exc:  # noqa: BLE001 - fallback should preserve provider error context.
+                    if _is_context_length_error(exc):
+                        raise
+                    self.memory.record_model_call(source, model, error=str(exc))
+                    errors.append(f"{model} attempt {attempt + 1}: {exc}")
+                    if not _is_retryable_model_error(exc) or attempt == len(backoffs):
+                        break
+                    await asyncio.sleep(backoffs[attempt])
         raise RuntimeError("All configured OpenAI-compatible models failed: " + " | ".join(errors))
+
+    def _raise_if_model_input_cap_exceeded(self, model: str, kwargs: dict[str, Any]) -> None:
+        limit = _model_input_token_limit(model, self.settings.openai_model_input_token_limits)
+        if limit is None:
+            return
+        estimated = _estimate_messages_tokens(kwargs.get("messages", []))
+        if estimated > limit:
+            raise RuntimeError(
+                f"context_length_exceeded: estimated prompt tokens {estimated} exceed configured input cap {limit} for {model}"
+            )
 
     async def _flash_completion(self, **kwargs: Any) -> Any:
         errors: list[str] = []
@@ -851,8 +883,22 @@ class CodingAgent:
             for attempt in range(len(backoffs) + 1):
                 for model in self.flash_candidate_models():
                     try:
-                        return await self.client.chat.completions.create(model=model, **kwargs)
+                        self._raise_if_model_input_cap_exceeded(model, kwargs)
+                        response = await self.client.chat.completions.create(model=model, **kwargs)
+                        self.memory.record_model_call(
+                            "flash",
+                            model,
+                            _usage_value(response, "prompt_tokens"),
+                            _usage_value(response, "completion_tokens"),
+                            _usage_value(response, "total_tokens"),
+                            _usage_detail_value(response, "prompt_tokens_details", "cached_tokens"),
+                            _usage_detail_value(response, "completion_tokens_details", "reasoning_tokens")
+                            or _usage_value(response, "reasoning_tokens"),
+                            _usage_detail_value(response, "prompt_tokens_details", "image_tokens"),
+                        )
+                        return response
                     except Exception as exc:  # noqa: BLE001 - fallback should preserve provider error context.
+                        self.memory.record_model_call("flash", model, error=str(exc))
                         errors.append(f"attempt {attempt + 1} {model}: {exc}")
                 if attempt < len(backoffs):
                     await asyncio.sleep(backoffs[attempt])
@@ -891,6 +937,47 @@ def _usage_value(response: Any, name: str) -> int | None:
     if value is None and isinstance(usage, dict):
         value = usage.get(name)
     return int(value) if value is not None else None
+
+
+def _usage_detail_value(response: Any, details_name: str, name: str) -> int | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    details = getattr(usage, details_name, None)
+    if details is None and isinstance(usage, dict):
+        details = usage.get(details_name)
+    if details is None:
+        return None
+    value = getattr(details, name, None)
+    if value is None and isinstance(details, dict):
+        value = details.get(name)
+    return int(value) if value is not None else None
+
+
+def _model_input_token_limit(model: str, limits: str) -> int | None:
+    for item in limits.split(","):
+        key, sep, value = item.partition("=")
+        if not sep:
+            continue
+        if key.strip() != model:
+            continue
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
+
+
+def _is_retryable_model_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code in {408, 409, 429, 500, 502, 503, 504}
+    name = type(exc).__name__.lower()
+    if "timeout" in name or "connection" in name:
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in ["rate limit", "temporarily unavailable", "timeout", "connection"])
 
 
 def _log_source_kind(source: str) -> str:
@@ -951,6 +1038,29 @@ def _render_message_for_summary(message: dict[str, object]) -> str:
 
 def _estimate_messages_tokens(messages: list[dict[str, object]]) -> int:
     return sum(_estimate_tokens(_render_message_for_summary(message)) for message in messages)
+
+
+def _split_history_indexes_by_token_weight(
+    history_indexes: list[int],
+    messages: list[dict[str, object]],
+    summarize_ratio: float = 0.6,
+    min_recent: int = 5,
+) -> tuple[list[int], list[int]]:
+    if len(history_indexes) <= 1:
+        return [], history_indexes
+    weights = [(index, _estimate_tokens(_render_message_for_summary(messages[index]))) for index in history_indexes]
+    total = sum(weight for _, weight in weights)
+    target = max(1, int(total * summarize_ratio))
+    max_summarize_count = max(1, len(history_indexes) - min(min_recent, len(history_indexes) - 1))
+    summarized: list[int] = []
+    used = 0
+    for index, weight in weights[:max_summarize_count]:
+        summarized.append(index)
+        used += weight
+        if used >= target:
+            break
+    recent = history_indexes[len(summarized) :]
+    return summarized, recent
 
 
 def _estimate_tokens(text: str) -> int:

@@ -49,6 +49,39 @@ class MemoryStore:
                 (content, int(notified)),
             )
 
+    def record_model_call(
+        self,
+        source: str,
+        model: str,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
+        image_tokens: int | None = None,
+        error: str = "",
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into model_calls(
+                    source, model, prompt_tokens, completion_tokens, total_tokens,
+                    cached_tokens, reasoning_tokens, image_tokens, error
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    cached_tokens,
+                    reasoning_tokens,
+                    image_tokens,
+                    error[:4000],
+                ),
+            )
+
     def get_context(
         self,
         query: str,
@@ -137,6 +170,20 @@ class MemoryStore:
                     id integer primary key autoincrement,
                     content text not null,
                     notified integer not null,
+                    created_at text not null default current_timestamp
+                );
+
+                create table if not exists model_calls (
+                    id integer primary key autoincrement,
+                    source text not null,
+                    model text not null,
+                    prompt_tokens integer,
+                    completion_tokens integer,
+                    total_tokens integer,
+                    cached_tokens integer,
+                    reasoning_tokens integer,
+                    image_tokens integer,
+                    error text not null default '',
                     created_at text not null default current_timestamp
                 );
                 """
