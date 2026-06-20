@@ -48,10 +48,23 @@ def test_raw_tool_messages_are_preserved(tmp_path: Path) -> None:
 def test_summary_tracks_checkpoint(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.sqlite3")
     store.add_message("user", "remember project alpha")
+    store.add_message("assistant", "ok")
 
     store.upsert_summary("Project alpha matters.", 1)
 
-    assert store.get_context("", recent_limit=0).summary == "Project alpha matters."
+    context = store.get_context("", recent_limit=10)
+
+    assert context.summary == "Project alpha matters."
+    assert context.recent_messages == [("assistant", "ok")]
+
+
+def test_last_message_id_tracks_latest_message(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.sqlite3")
+
+    assert store.last_message_id() == 0
+    store.add_message("user", "hello")
+
+    assert store.last_message_id() == 1
 
 
 def test_contacts_are_persisted(tmp_path: Path) -> None:

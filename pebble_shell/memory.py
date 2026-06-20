@@ -57,15 +57,17 @@ class MemoryStore:
     ) -> MemoryContext:
         del query
         with self._connect() as conn:
-            summary = conn.execute("select content from summary where id = 1").fetchone()
+            summary = conn.execute("select content, through_message_id from summary where id = 1").fetchone()
+            through_message_id = int(summary["through_message_id"]) if summary else 0
             recent_rows = conn.execute(
                 """
                 select role, content, raw_json
                 from messages
+                where id > ?
                 order by id desc
                 limit ?
                 """,
-                (recent_limit,),
+                (through_message_id, recent_limit),
             ).fetchall()
 
         legacy_recent = list(reversed([(row["role"], row["content"]) for row in recent_rows]))
@@ -94,6 +96,11 @@ class MemoryStore:
                 """,
                 (content.strip(), through_message_id),
             )
+
+    def last_message_id(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("select coalesce(max(id), 0) from messages").fetchone()
+        return int(row[0])
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)

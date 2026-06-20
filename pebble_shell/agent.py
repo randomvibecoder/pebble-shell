@@ -699,8 +699,12 @@ class CodingAgent:
 
         summarized_messages = [messages[index] for index in summarize_indexes]
         before_tokens = _estimate_messages_tokens(summarized_messages)
-        summary = await self._summarize_active_context(prior_summary, summarized_messages, background_job_id)
-        summary_tokens = _estimate_tokens(summary)
+        summary, summary_input_tokens, summary_output_tokens = await self._summarize_active_context(
+            prior_summary,
+            summarized_messages,
+            background_job_id,
+        )
+        summary_tokens = summary_output_tokens or _estimate_tokens(summary)
         if background_job_id is None:
             self.context_files.refresh()
             self._refresh_memory_md()
@@ -735,7 +739,9 @@ class CodingAgent:
         if background_job_id:
             self.background_store.set_summary(background_job_id, summary)
             self.background_store.save_context(background_job_id, messages)
-        await self._notify_summary(background_job_id, before_tokens, summary_tokens)
+        else:
+            self.memory.upsert_summary(summary, self.memory.last_message_id())
+        await self._notify_summary(background_job_id, before_tokens, summary_tokens, summary_input_tokens, summary_output_tokens)
         return True
 
     async def _summarize_active_context(
@@ -743,37 +749,59 @@ class CodingAgent:
         prior_summary: str,
         messages: list[dict[str, object]],
         background_job_id: str | None,
-    ) -> str:
-        scope = f"background job {background_job_id}" if background_job_id else "foreground conversation"
+    ) -> tuple[str, int | None, int | None]:
         response = await self._chat_completion(
-            messages=[
-                {"role": "system", "content": SUMMARY_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        f"Scope: {scope}\n\n"
-                        f"Previous summary:\n{prior_summary or '(none)'}\n\n"
-                        f"Messages, tool calls, and tool results to compact:\n"
-                        f"{_render_messages_for_summary(messages)}"
-                    ),
-                },
-            ],
+            messages=self._build_summarizer_messages(prior_summary, messages, background_job_id),
             tool_choice="none",
         )
-        return response.choices[0].message.content or prior_summary or "(summary unavailable)"
+        summary = response.choices[0].message.content or prior_summary or "(summary unavailable)"
+        return summary, _usage_value(response, "prompt_tokens"), _usage_value(response, "completion_tokens")
+
+    def _build_summarizer_messages(
+        self,
+        prior_summary: str,
+        messages: list[dict[str, object]],
+        background_job_id: str | None,
+    ) -> list[dict[str, object]]:
+        scope = f"background job {background_job_id}" if background_job_id else "foreground conversation"
+        summarizer_messages: list[dict[str, object]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        summarizer_messages.extend(self.context_files.load())
+        memory_md = self._memory_md_message()
+        if memory_md:
+            summarizer_messages.append(memory_md)
+        if prior_summary:
+            summarizer_messages.append({"role": "system", "content": prior_summary})
+        summarizer_messages.extend(messages)
+        summarizer_messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"Scope: {scope}\n\n"
+                    f"{SUMMARY_PROMPT}\n\n"
+                    "Summarize all conversation, tool calls, and tool results above that belong to this scope. "
+                    "Return only the updated summary."
+                ),
+            }
+        )
+        return summarizer_messages
 
     async def _notify_summary(
         self,
         background_job_id: str | None,
         before_tokens: int,
         summary_tokens: int,
+        provider_input_tokens: int | None = None,
+        provider_output_tokens: int | None = None,
     ) -> None:
-        notice = "[compacted]"
+        if provider_input_tokens is not None and provider_output_tokens is not None:
+            notice = f"[compacted {provider_input_tokens} tokens to {provider_output_tokens} tokens]"
+        else:
+            notice = "[compacted]"
         if background_job_id:
             self.background_store.add_event(
                 background_job_id,
                 "summary",
-                f"[compacted] summarized {before_tokens} tokens to {summary_tokens} tokens",
+                f"{notice} summarized {before_tokens} estimated tokens to {summary_tokens} tokens",
             )
         if self._deliver:
             await self._deliver(notice)

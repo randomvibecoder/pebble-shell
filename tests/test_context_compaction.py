@@ -109,9 +109,15 @@ async def test_foreground_summarizes_only_after_context_length_error(tmp_path: P
     _assert_summary_notice(delivered[0])
     calls = agent.client.chat.completions.calls  # type: ignore[attr-defined]
     assert calls[2]["tool_choice"] == "none"
+    summary_messages = calls[2]["messages"]
+    assert "You are Pebble Shell" in summary_messages[0]["content"]
+    assert any(str(message.get("content", "")).startswith("context/USER.md:") for message in summary_messages)
+    assert any(message.get("role") == "user" and message.get("content") == "inspect the workspace" for message in summary_messages)
+    assert "Return only the updated summary" in summary_messages[-1]["content"]
     retry_messages = calls[3]["messages"]
     assert any("Active foreground compacted summary" in str(message.get("content")) for message in retry_messages)
     assert any(message.get("role") == "tool" for message in retry_messages)
+    assert agent.memory.get_context("", recent_limit=10).summary == "Detailed summary of the compacted foreground conversation and tool result."
 
 
 @pytest.mark.asyncio
