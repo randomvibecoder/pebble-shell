@@ -323,7 +323,8 @@ class CodingAgent:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = dumps_dir / f"heartbeat_{timestamp}.jsonl"
         with path.open("w", encoding="utf-8") as handle:
-            handle.write(json.dumps({"kind": "chat_completion_kwargs", "payload": payload}, ensure_ascii=False) + "\n")
+            for message in payload["messages"]:
+                handle.write(json.dumps(message, ensure_ascii=False) + "\n")
         return path
 
     async def run_background_task(self, job: BackgroundJob) -> AgentResponse:

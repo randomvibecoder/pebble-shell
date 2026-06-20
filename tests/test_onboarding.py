@@ -171,7 +171,7 @@ async def test_recent_memory_is_sent_as_native_roles_not_system_transcript(tmp_p
     assert "\nassistant: what do you need?" not in system_text
 
 
-def test_dump_next_heartbeat_context_writes_exact_chat_completion_kwargs(tmp_path: Path) -> None:
+def test_dump_next_heartbeat_context_writes_messages_jsonl(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     (agent.settings.agent_workspace / "context" / "HEARTBEAT.md").write_text("SECRET HEARTBEAT BODY", encoding="utf-8")
     agent.memory.add_message("user", "hello")
@@ -180,16 +180,15 @@ def test_dump_next_heartbeat_context_writes_exact_chat_completion_kwargs(tmp_pat
     path = agent.dump_next_heartbeat_context()
 
     assert path.name.startswith("heartbeat_")
-    payload = __import__("json").loads(path.read_text(encoding="utf-8"))["payload"]
-    assert payload["model"] == "xiaomi/mimo-v2.5-pro:thinking"
-    assert payload["tool_choice"] == "auto"
-    assert isinstance(payload["tools"], list)
-    assert {"role": "user", "content": "hello"} in payload["messages"]
-    assert {"role": "assistant", "content": "hi"} in payload["messages"]
-    assert payload["messages"][-1]["role"] == "user"
-    assert "read_file" in payload["messages"][-1]["content"]
-    assert "context/HEARTBEAT.md" in payload["messages"][-1]["content"]
-    assert "SECRET HEARTBEAT BODY" not in str(payload["messages"])
+    messages = [__import__("json").loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert messages
+    assert all(set(message) <= {"role", "content", "tool_calls", "tool_call_id", "name"} for message in messages)
+    assert {"role": "user", "content": "hello"} in messages
+    assert {"role": "assistant", "content": "hi"} in messages
+    assert messages[-1]["role"] == "user"
+    assert "read_file" in messages[-1]["content"]
+    assert "context/HEARTBEAT.md" in messages[-1]["content"]
+    assert "SECRET HEARTBEAT BODY" not in str(messages)
 
 
 def test_heartbeat_prompt_includes_current_utc_time(tmp_path: Path) -> None:
