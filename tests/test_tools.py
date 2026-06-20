@@ -145,6 +145,8 @@ def test_read_file_truncates_large_text_files(tmp_path: Path) -> None:
     assert result.ok is True
     assert len(result.output) < 50_000
     assert "read_file truncated" in result.output
+    assert "Use targeted shell commands" in result.output
+    assert "sed, rg, head, tail" in result.output
 
 
 def test_publish_static_site_copies_directory_without_hidden_files(tmp_path: Path) -> None:

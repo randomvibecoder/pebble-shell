@@ -24,7 +24,7 @@ from .runtime_config import RuntimeConfigStore
 from .self_improvement import SelfImprovementStore
 from .skills import SkillLoader
 
-MAX_READ_FILE_BYTES = 200_000
+MAX_READ_FILE_BYTES = 40_000
 MAX_READ_FILE_CHARS = 40_000
 MAX_INSPECT_IMAGE_BYTES = 4_000_000
 MAX_SEND_FILE_BYTES = 25_000_000
@@ -666,7 +666,11 @@ class WorkspaceTools:
             content = content[:MAX_READ_FILE_CHARS]
             truncated = True
         if truncated:
-            content += f"\n[read_file truncated at {min(MAX_READ_FILE_BYTES, MAX_READ_FILE_CHARS)} bytes/chars]"
+            content += (
+                f"\n[read_file truncated at {min(MAX_READ_FILE_BYTES, MAX_READ_FILE_CHARS)} bytes/chars. "
+                "Use targeted shell commands such as sed, rg, head, tail, wc, or file-specific extractors "
+                "to inspect the remaining content.]"
+            )
         return ToolResult(ok=True, output=content)
 
     def write_file(self, path: str, content: str) -> ToolResult:
