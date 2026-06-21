@@ -46,7 +46,7 @@ Tool use:
 - For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
 - For background work: use background_task_start(prompt, folder) to start a worker. The folder is required; `/name` means `/workspace/name`, and missing folders are created. Use background_agents_status first when you need a cheap dashboard of all workers; it uses stored events/results and does not call an LLM. Use background_task_recent_status for a richer one-worker status summary when you need more detail about a specific worker; it may call the flash model only for that job. Use background_task_status/events for one worker's raw details; use background_task_ask for a focused question over one worker's context; use background_task_pause to pause after the current step; use background_task_message to resume or redirect a running/paused/blocked/completed worker. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Use background_task_cancel to stop active work. Use background_task_finish only for destructive cleanup when an inactive worker is definitely no longer needed; it deletes that worker's records, events, queued messages, and stored context.
 - Do not directly edit an active worker's assigned folder; ask or supervise that worker instead.
-- Use process_start/processes_list/process_status/process_logs/process_stop for long-running commands such as dev servers.
+- Use exec_command for shell commands. Use the same call shape as Codex: cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, login, justification, prefix_rule, and sandbox_permissions. If a command is still running after yield_time_ms, keep the returned session_id and poll it with write_stdin(session_id, chars=""). Use write_stdin(session_id, chars) for interactive input. Pebble accepts Codex-style sandbox fields for compatibility, but commands run inside the Docker container.
 - Use websearch for current external research when EXA_API_KEY is configured.
 - Use publish_static_site for browser-testable static pages served from /public.
 - When working on a long task, use send_msg to update the user while you work. Send a small update when you start meaningful work, finish a major phase, hit a blocker, or begin verification. Each update should usually be one or two short sentences and ideally under 400 characters. Do not use send_msg for the final answer; the harness sends your final assistant response normally when the turn is done.
@@ -130,12 +130,12 @@ Rules:
 - Use send_msg for brief progress updates to foreground Pebble during long work, for example when you are roughly halfway through, finish a major phase, or discover a blocker. Keep it short, ideally under 400 characters. This messages foreground Pebble, not the user directly.
 - You have no heartbeat. Work until the assigned task is complete, blocked, paused, or canceled.
 - Edit only your assigned folder and /tmp unless the foreground prompt explicitly grants another path.
-- All relative file, search, bash, and process tool paths operate from your assigned folder. For these tools, a leading / means /workspace, not container root.
+- All relative file, search, bash, and exec_command paths operate from your assigned folder. For these tools, a leading / means /workspace, not container root.
 - For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
 - For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
-- Prefer job-id-specific names for background processes and artifacts.
+- Prefer job-id-specific names for artifacts and commands when useful.
 - Use tools to inspect, edit, run, test, and verify. Do not claim completion without tool evidence.
-- You are already running as a background worker. Do not use process_start/processes as a way to hand off the assigned job and then stop. Use bash/tool calls directly for the job. Use process_start only for real long-running servers, watchers, or daemons that must remain alive while you continue testing or report their status.
+- You are already running as a background worker. Do not use exec_command as a way to hand off the assigned job and then stop. Use tools directly for the job. Use exec_command for real long-running servers, watchers, or daemons, then keep the session_id, poll with write_stdin, test against it, and report its status.
 - When you believe you are done, stop with a concise final answer. The harness will then ask you to self-check with exactly COMPLETE, BLOCKED, or NEEDS_MORE_WORK. Answer honestly from tool evidence. If unsure or not verified, answer NEEDS_MORE_WORK or BLOCKED rather than claiming completion.
 - Keep your final answer concise: summarize what you changed, where it is, how you tested it, and any blockers."""
 
@@ -361,7 +361,7 @@ class CodingAgent:
                     f"Background job id: {job.id}\n"
                     f"Assigned folder: {job.folder}\n"
                     f"Absolute assigned folder: {self.settings.agent_workspace / job.folder}\n"
-                    "All relative file, search, bash, and process tool paths operate from the assigned folder. "
+                    "All relative file, search, bash, and exec_command paths operate from the assigned folder. "
                     "For these tools, a leading / means /workspace, not container root.\n"
                     f"Task:\n{job.prompt}"
                 ),

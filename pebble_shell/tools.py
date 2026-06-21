@@ -275,14 +275,22 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "process_start",
-                    "description": "Start a long-running background process inside the workspace, such as a dev server.",
+                    "name": "exec_command",
+                    "description": "Runs a command in a terminal session. If it is still running after yield_time_ms, returns a session_id for ongoing interaction.",
                     "parameters": {
                         "type": "object",
-                        "required": ["name", "command"],
+                        "required": ["cmd"],
                         "properties": {
-                            "name": {"type": "string"},
-                            "command": {"type": "string"},
+                            "cmd": {"type": "string"},
+                            "justification": {"type": "string"},
+                            "login": {"type": "boolean"},
+                            "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 30000},
+                            "max_output_tokens": {"type": "integer"},
+                            "prefix_rule": {"type": "array", "items": {"type": "string"}},
+                            "sandbox_permissions": {"type": "string"},
+                            "shell": {"type": "string"},
+                            "tty": {"type": "boolean"},
+                            "workdir": {"type": "string"},
                         },
                     },
                 },
@@ -290,47 +298,17 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "processes_list",
-                    "description": "List background processes started by this agent.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "process_status",
-                    "description": "Inspect one background process status.",
+                    "name": "write_stdin",
+                    "description": "Write to or poll a running exec_command session by session_id. Use empty chars to poll recent output without writing.",
                     "parameters": {
                         "type": "object",
-                        "required": ["name"],
-                        "properties": {"name": {"type": "string"}},
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "process_logs",
-                    "description": "Read recent logs for one background process.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["name"],
+                        "required": ["session_id"],
                         "properties": {
-                            "name": {"type": "string"},
-                            "max_chars": {"type": "integer", "minimum": 1, "maximum": 20000},
+                            "session_id": {"type": "integer"},
+                            "chars": {"type": "string"},
+                            "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 30000},
+                            "max_output_tokens": {"type": "integer"},
                         },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "process_stop",
-                    "description": "Stop one background process.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["name"],
-                        "properties": {"name": {"type": "string"}},
                     },
                 },
             },
@@ -484,16 +462,23 @@ class WorkspaceTools:
                 return self.public_sites_list()
             if name == "bash":
                 return self.bash(arguments["command"])
-            if name == "process_start":
-                return self.process_start(arguments["name"], arguments["command"])
-            if name == "processes_list":
-                return self.processes_list()
-            if name == "process_status":
-                return self.process_status(arguments["name"])
-            if name == "process_logs":
-                return self.process_logs(arguments["name"], int(arguments.get("max_chars", 4000)))
-            if name == "process_stop":
-                return self.process_stop(arguments["name"])
+            if name == "exec_command":
+                return self.exec_command(
+                    arguments["cmd"],
+                    int(arguments.get("yield_time_ms", 10000)),
+                    int(arguments.get("max_output_tokens", 20000)),
+                    bool(arguments.get("tty", False)),
+                    arguments.get("workdir"),
+                    arguments.get("shell"),
+                    bool(arguments.get("login", True)),
+                )
+            if name == "write_stdin":
+                return self.write_stdin(
+                    int(arguments["session_id"]),
+                    str(arguments.get("chars", "")),
+                    int(arguments.get("yield_time_ms", 10000)),
+                    int(arguments.get("max_output_tokens", 20000)),
+                )
             if name == "read_image":
                 return self.read_image(arguments["path"], arguments.get("question", "Describe this image."))
             if name == "websearch":
@@ -808,28 +793,32 @@ class WorkspaceTools:
             self.shell_audit.record(command, completed.returncode == 0, "normal", "Allowed inside Docker container", completed.returncode, output)
         return ToolResult(ok=completed.returncode == 0, output=output or f"exit code {completed.returncode}")
 
-    def process_start(self, name: str, command: str) -> ToolResult:
+    def exec_command(
+        self,
+        cmd: str,
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 20000,
+        tty: bool = False,
+        workdir: str | None = None,
+        shell: str | None = None,
+        login: bool = True,
+    ) -> ToolResult:
         try:
-            shlex.split(command)[0]
+            shlex.split(cmd)[0]
         except (IndexError, ValueError) as exc:
             return ToolResult(ok=False, output=f"Invalid process command: {exc}")
 
-        status = self.processes.start(name, command)
+        try:
+            resolved_workdir = self._resolve(workdir) if workdir else self.cwd
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        status = self.processes.exec_command(cmd, yield_time_ms, max_output_tokens, tty, resolved_workdir, shell, login)
         if self.shell_audit:
-            self.shell_audit.record(command, True, "normal", f"Started background process {name}", None, json.dumps(status, sort_keys=True))
+            self.shell_audit.record(cmd, True, "normal", "Started terminal command", None, json.dumps(status, sort_keys=True))
         return ToolResult(ok=True, output=json.dumps(status, sort_keys=True))
 
-    def processes_list(self) -> ToolResult:
-        return ToolResult(ok=True, output=json.dumps(self.processes.list(), sort_keys=True))
-
-    def process_status(self, name: str) -> ToolResult:
-        return ToolResult(ok=True, output=json.dumps(self.processes.status(name), sort_keys=True))
-
-    def process_logs(self, name: str, max_chars: int = 4000) -> ToolResult:
-        return ToolResult(ok=True, output=self.processes.logs(name, max_chars))
-
-    def process_stop(self, name: str) -> ToolResult:
-        status = self.processes.stop(name)
+    def write_stdin(self, session_id: int, chars: str = "", yield_time_ms: int = 10000, max_output_tokens: int = 20000) -> ToolResult:
+        status = self.processes.write_stdin(session_id, chars, yield_time_ms, max_output_tokens)
         return ToolResult(ok=True, output=json.dumps(status, sort_keys=True))
 
     def read_image(self, path: str, question: str = "Describe this image.") -> ToolResult:

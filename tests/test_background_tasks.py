@@ -260,7 +260,7 @@ async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> No
     tool_names = {tool["function"]["name"] for tool in first_call["tools"]}
     assert "background_task_start" not in tool_names
     system_text = "\n".join(str(message.get("content", "")) for message in first_call["messages"] if message.get("role") == "system")
-    assert "Do not use process_start/processes as a way to hand off the assigned job" in system_text
+    assert "Do not use exec_command as a way to hand off the assigned job" in system_text
     prompt_text = "\n".join(str(message.get("content", "")) for message in first_call["messages"])
     assert "Original Discord user" not in prompt_text
     assert "Original Discord channel" not in prompt_text

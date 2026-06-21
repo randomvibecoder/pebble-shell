@@ -318,12 +318,15 @@ def test_shell_runs_inside_workspace(tmp_path: Path) -> None:
 
 def test_background_process_lifecycle(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+    session_id = None
 
     start = tools.run(
-        "process_start",
+        "exec_command",
         {
-            "name": "dev-server",
-            "command": "python -c \"import time; print('READY', flush=True); time.sleep(30)\"",
+            "cmd": "python -c \"import time; print('READY', flush=True); time.sleep(30)\"",
+            "yield_time_ms": 50,
+            "max_output_tokens": 4000,
+            "login": True,
         },
     )
 
@@ -331,37 +334,93 @@ def test_background_process_lifecycle(tmp_path: Path) -> None:
         assert start.ok
         start_status = json.loads(start.output)
         assert start_status["running"] is True
-        assert start_status["name"] == "dev-server"
+        assert isinstance(start_status["session_id"], int)
+        session_id = start_status["session_id"]
 
-        logs = ""
+        output = start_status["output"]
         for _ in range(20):
-            logs_result = tools.run("process_logs", {"name": "dev-server"})
-            logs = logs_result.output
-            if "READY" in logs:
+            poll_result = tools.run("write_stdin", {"session_id": session_id, "chars": "", "yield_time_ms": 50})
+            output += json.loads(poll_result.output)["output"]
+            if "READY" in output:
                 break
             time.sleep(0.05)
-        assert "READY" in logs
+        assert "READY" in output
 
-        listed = json.loads(tools.run("processes_list", {}).output)
-        assert listed[0]["name"] == "dev-server"
-        assert json.loads(tools.run("process_status", {"name": "dev-server"}).output)["running"] is True
+        definitions = {definition["function"]["name"] for definition in tools.definitions()}
+        assert "exec_command" in definitions
+        assert "write_stdin" in definitions
+        assert "process_start" not in definitions
+        assert "process_status" not in definitions
+        assert "process_logs" not in definitions
+        assert "process_stop" not in definitions
     finally:
-        stop = tools.run("process_stop", {"name": "dev-server"})
+        stop_payload = tools.processes.stop(session_id) if session_id is not None else None
 
-    assert stop.ok
-    assert json.loads(stop.output)["running"] is False
+    assert stop_payload is not None
+    assert stop_payload["running"] is False
 
 
-def test_background_process_start_allows_container_commands(tmp_path: Path) -> None:
+def test_exec_command_supports_stdin(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
 
-    result = tools.run("process_start", {"name": "container-command", "command": "docker ps"})
+    start = tools.run(
+        "exec_command",
+        {
+            "cmd": "python -c \"import sys; line=sys.stdin.readline(); print('ECHO:' + line.strip(), flush=True)\"",
+            "yield_time_ms": 50,
+        },
+    )
 
-    try:
-        assert result.ok
-        assert json.loads(result.output)["name"] == "container-command"
-    finally:
-        tools.run("process_stop", {"name": "container-command"})
+    assert start.ok
+    session_id = json.loads(start.output)["session_id"]
+    result = tools.run("write_stdin", {"session_id": session_id, "chars": "hello\n", "yield_time_ms": 1000})
+
+    assert result.ok
+    payload = json.loads(result.output)
+    output = payload["output"]
+    for _ in range(5):
+        if "ECHO:hello" in output and not payload["running"]:
+            break
+        payload = json.loads(tools.run("write_stdin", {"session_id": session_id, "chars": "", "yield_time_ms": 1000}).output)
+        output += payload["output"]
+    assert "ECHO:hello" in output
+    assert payload["running"] is False
+
+
+def test_exec_command_supports_codex_shaped_arguments(tmp_path: Path) -> None:
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+    (tmp_path / "subdir").mkdir()
+
+    result = tools.run(
+        "exec_command",
+        {
+            "cmd": "pwd",
+            "workdir": "subdir",
+            "yield_time_ms": 1000,
+            "max_output_tokens": 2000,
+            "tty": True,
+            "shell": "/bin/bash",
+            "login": True,
+            "justification": "same shape as Codex",
+            "prefix_rule": ["pwd"],
+            "sandbox_permissions": "use_default",
+        },
+    )
+
+    assert result.ok
+    payload = json.loads(result.output)
+    assert payload["running"] is False
+    assert payload["output"].strip() == str(tmp_path / "subdir")
+
+
+def test_old_process_tool_names_are_not_model_tools(tmp_path: Path) -> None:
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+    definitions = {definition["function"]["name"] for definition in tools.definitions()}
+
+    assert {"exec_command", "write_stdin"} <= definitions
+    for name in ("process_start", "process_status", "process_logs", "process_stop", "processes_list"):
+        assert name not in definitions
+        assert not tools.run(name, {}).ok
 
 
 def test_websearch_uses_api_key_and_limits_results(tmp_path: Path, monkeypatch) -> None:

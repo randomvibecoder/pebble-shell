@@ -1,119 +1,226 @@
 from __future__ import annotations
 
-import json
 import os
-import re
+import select
 import signal
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 
-PROCESS_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+DEFAULT_YIELD_MS = 10_000
+MAX_YIELD_MS = 30_000
+DEFAULT_OUTPUT_CHARS = 20_000
+MAX_OUTPUT_CHARS = 100_000
 
 
 @dataclass(slots=True)
-class ManagedProcess:
-    name: str
+class TerminalSession:
+    session_id: int
     command: str
     started_at: float
     log_path: Path
-    process: subprocess.Popen[str]
+    process: subprocess.Popen[bytes]
+    output: bytearray = field(default_factory=bytearray)
+    read_offset: int = 0
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class BackgroundProcessManager:
     def __init__(self, root: Path, cwd: Path | None = None) -> None:
-        self.root = root
+        self.root = root.resolve()
         self.cwd = (cwd or root).resolve()
-        self.processes: dict[str, ManagedProcess] = {}
-        self.state_dir = self.root / ".pebble_shell" / "processes"
+        self.sessions: dict[int, TerminalSession] = {}
+        self._next_session_id = 1
+        self._lock = threading.Lock()
+        self.state_dir = self.root / ".pebble_shell" / "terminal_sessions"
         self.state_dir.mkdir(parents=True, exist_ok=True)
 
-    def start(self, name: str, command: str) -> dict[str, Any]:
-        _validate_name(name)
-        command = command.strip()
+    def exec_command(
+        self,
+        cmd: str,
+        yield_time_ms: int = DEFAULT_YIELD_MS,
+        max_output_tokens: int = DEFAULT_OUTPUT_CHARS,
+        tty: bool = False,
+        workdir: Path | None = None,
+        shell: str | None = None,
+        login: bool = True,
+    ) -> dict[str, Any]:
+        command = cmd.strip()
         if not command:
-            raise ValueError("process command cannot be empty")
-        existing = self.processes.get(name)
-        if existing and existing.process.poll() is None:
-            raise ValueError(f"Process already running: {name}")
-
-        log_path = self.state_dir / f"{name}.log"
-        log_file = log_path.open("ab")
+            raise ValueError("cmd cannot be empty")
+        cwd = (workdir or self.cwd).resolve()
+        if cwd != self.root and self.root not in cwd.parents:
+            raise ValueError(f"workdir escapes workspace: {cwd}")
+        cwd.mkdir(parents=True, exist_ok=True)
+        executable = shell or "/bin/bash"
+        session_id = self._allocate_session_id()
+        log_path = self.state_dir / f"session_{session_id}.log"
         process = subprocess.Popen(
             command,
-            cwd=self.cwd,
+            cwd=cwd,
             shell=True,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=False,
-            executable="/bin/bash",
+            executable=executable,
             start_new_session=True,
         )
-        log_file.close()
-        managed = ManagedProcess(name=name, command=command, started_at=time.time(), log_path=log_path, process=process)
-        self.processes[name] = managed
-        self._write_metadata(managed)
-        return self.status(name)
+        session = TerminalSession(
+            session_id=session_id,
+            command=command,
+            started_at=time.time(),
+            log_path=log_path,
+            process=process,
+        )
+        self.sessions[session_id] = session
+        threading.Thread(target=self._reader, args=(session,), daemon=True).start()
+        return self._wait_and_status(session, yield_time_ms, max_output_tokens, incremental=False, tty=tty)
+
+    def write_stdin(
+        self,
+        session_id: int,
+        chars: str = "",
+        yield_time_ms: int = DEFAULT_YIELD_MS,
+        max_output_tokens: int = DEFAULT_OUTPUT_CHARS,
+    ) -> dict[str, Any]:
+        session = self._session(session_id)
+        if chars and session.process.poll() is None:
+            if session.process.stdin is None:
+                raise ValueError(f"Session {session_id} does not accept stdin")
+            session.process.stdin.write(chars.encode("utf-8", errors="replace"))
+            session.process.stdin.flush()
+        return self._wait_and_status(session, yield_time_ms, max_output_tokens, incremental=True)
 
     def list(self) -> list[dict[str, Any]]:
-        return [self.status(name) for name in sorted(self.processes)]
+        return [self.status(session_id) for session_id in sorted(self.sessions)]
 
-    def status(self, name: str) -> dict[str, Any]:
-        _validate_name(name)
-        managed = self.processes.get(name)
-        if not managed:
-            raise ValueError(f"Unknown process: {name}")
-        return _status_dict(managed)
+    def status(self, session_id: int) -> dict[str, Any]:
+        session = self._session(session_id)
+        return self._status_dict(session)
 
-    def logs(self, name: str, max_chars: int = 4000) -> str:
-        _validate_name(name)
-        managed = self.processes.get(name)
-        if not managed:
-            raise ValueError(f"Unknown process: {name}")
-        if not managed.log_path.is_file():
-            return ""
-        data = managed.log_path.read_bytes()
-        max_chars = max(1, min(max_chars, 20000))
-        return data[-max_chars:].decode("utf-8", errors="replace")
+    def logs(self, session_id: int, max_chars: int = DEFAULT_OUTPUT_CHARS) -> str:
+        session = self._session(session_id)
+        with session.lock:
+            output = bytes(session.output)
+        return _decode_tail(output, _clamp_output_chars(max_chars))
 
-    def stop(self, name: str, timeout_seconds: float = 5.0) -> dict[str, Any]:
-        _validate_name(name)
-        managed = self.processes.get(name)
-        if not managed:
-            raise ValueError(f"Unknown process: {name}")
-        if managed.process.poll() is None:
-            os.killpg(managed.process.pid, signal.SIGTERM)
+    def stop(self, session_id: int, timeout_seconds: float = 5.0) -> dict[str, Any]:
+        session = self._session(session_id)
+        if session.process.poll() is None:
+            os.killpg(session.process.pid, signal.SIGTERM)
             try:
-                managed.process.wait(timeout=timeout_seconds)
+                session.process.wait(timeout=timeout_seconds)
             except subprocess.TimeoutExpired:
-                os.killpg(managed.process.pid, signal.SIGKILL)
-                managed.process.wait(timeout=timeout_seconds)
-        self._write_metadata(managed)
-        return _status_dict(managed)
+                os.killpg(session.process.pid, signal.SIGKILL)
+                session.process.wait(timeout=timeout_seconds)
+        return self._status_dict(session)
 
-    def _write_metadata(self, managed: ManagedProcess) -> None:
-        metadata = _status_dict(managed)
-        metadata["log_path"] = str(managed.log_path)
-        (self.state_dir / f"{managed.name}.json").write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
+    def _reader(self, session: TerminalSession) -> None:
+        assert session.process.stdout is not None
+        fd = session.process.stdout.fileno()
+        with session.log_path.open("ab") as log_file:
+            while True:
+                ready, _, _ = select.select([fd], [], [], 0.1)
+                if not ready:
+                    if session.process.poll() is not None:
+                        try:
+                            chunk = os.read(fd, 4096)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        self._record_output(session, log_file, chunk)
+                    continue
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                self._record_output(session, log_file, chunk)
+
+    def _record_output(self, session: TerminalSession, log_file: Any, chunk: bytes) -> None:
+        log_file.write(chunk)
+        log_file.flush()
+        with session.lock:
+            session.output.extend(chunk)
+
+    def _wait_and_status(
+        self,
+        session: TerminalSession,
+        yield_time_ms: int,
+        max_output_tokens: int,
+        incremental: bool,
+        tty: bool = False,
+    ) -> dict[str, Any]:
+        deadline = time.time() + (_clamp_yield_ms(yield_time_ms) / 1000)
+        while time.time() < deadline:
+            if session.process.poll() is not None:
+                time.sleep(0.02)
+                break
+            time.sleep(0.05)
+        status = self._status_dict(session, max_output_tokens=max_output_tokens, incremental=incremental)
+        if tty:
+            status["tty"] = False
+            status["tty_note"] = "PTY allocation is not implemented yet; command ran with pipe-based stdin/stdout."
+        return status
+
+    def _status_dict(
+        self,
+        session: TerminalSession,
+        max_output_tokens: int = DEFAULT_OUTPUT_CHARS,
+        incremental: bool = False,
+    ) -> dict[str, Any]:
+        with session.lock:
+            if incremental:
+                output = bytes(session.output[session.read_offset :])
+                session.read_offset = len(session.output)
+            else:
+                output = bytes(session.output)
+        returncode = session.process.poll()
+        running = returncode is None
+        return {
+            "session_id": session.session_id,
+            "command": session.command,
+            "pid": session.process.pid,
+            "running": running,
+            "returncode": returncode,
+            "started_at": session.started_at,
+            "log_file": f".pebble_shell/terminal_sessions/session_{session.session_id}.log",
+            "output": _decode_tail(output, _clamp_output_chars(max_output_tokens)),
+        }
+
+    def _session(self, session_id: int) -> TerminalSession:
+        try:
+            normalized = int(session_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid session_id: {session_id}") from exc
+        session = self.sessions.get(normalized)
+        if not session:
+            raise ValueError(f"Unknown session_id: {session_id}")
+        return session
+
+    def _allocate_session_id(self) -> int:
+        with self._lock:
+            session_id = self._next_session_id
+            self._next_session_id += 1
+        return session_id
 
 
-def _status_dict(managed: ManagedProcess) -> dict[str, Any]:
-    returncode = managed.process.poll()
-    return {
-        "name": managed.name,
-        "command": managed.command,
-        "pid": managed.process.pid,
-        "running": returncode is None,
-        "returncode": returncode,
-        "started_at": managed.started_at,
-        "log_file": f".pebble_shell/processes/{managed.name}.log",
-    }
+def _clamp_yield_ms(value: int) -> int:
+    return max(0, min(int(value), MAX_YIELD_MS))
 
 
-def _validate_name(name: str) -> None:
-    if not PROCESS_NAME_RE.fullmatch(name):
-        raise ValueError("process name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens")
+def _clamp_output_chars(value: int) -> int:
+    return max(1, min(int(value), MAX_OUTPUT_CHARS))
+
+
+def _decode_tail(output: bytes, max_chars: int) -> str:
+    text = output.decode("utf-8", errors="replace")
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]

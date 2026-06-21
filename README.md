@@ -7,7 +7,7 @@ A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It e
 - `POST /webhooks/{name}` for agent-created external hooks.
 - `GET /public/{path}` for published static files from `/workspace/public`.
 - `GET/POST /cron/jobs` plus `POST /cron/jobs/{name}/run` for scheduled automation.
-- `GET /status` for an authenticated runtime snapshot, including active background processes.
+- `GET /status` for an authenticated runtime snapshot, including active terminal sessions.
 - Optional Discord bot gateway support when `DISCORD_BOT_TOKEN` is provided.
 - OpenAI-compatible chat completions through `OPENAI_BASE_URL`.
 - Optional Exa API web search through `EXA_API_KEY`.
@@ -123,7 +123,7 @@ For browser-testable pages, the agent can call `publish_static_site` to copy a w
 
 For downloadable artifacts, the agent can call `send_file` with a workspace-relative path. The active transport adapter sends the file back to the user, for example after compiling a PDF.
 
-For dev servers and other long-running commands, use the background process tools: `process_start`, `processes_list`, `process_status`, `process_logs`, and `process_stop`. `GET /status` also reports active processes so a UI or Discord command can show what is still running.
+For dev servers and other long-running commands, use Codex-style terminal sessions. `exec_command(cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, login, justification, prefix_rule, sandbox_permissions)` starts a command and returns a `session_id` when it is still running. `write_stdin(session_id, chars, yield_time_ms, max_output_tokens)` writes to or polls that session; pass empty `chars` to poll. `GET /status` also reports active sessions so a UI or Discord command can show what is still running.
 
 ## Long-Running Operation
 
