@@ -401,9 +401,6 @@ def test_exec_command_supports_codex_shaped_arguments(tmp_path: Path) -> None:
             "tty": True,
             "shell": "/bin/bash",
             "login": True,
-            "justification": "same shape as Codex",
-            "prefix_rule": ["pwd"],
-            "sandbox_permissions": "use_default",
         },
     )
 

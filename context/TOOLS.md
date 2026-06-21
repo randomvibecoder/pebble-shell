@@ -2,7 +2,7 @@
 
 - `bash` runs inside the Docker container workspace. In a background worker, it runs from the assigned folder.
 - Prefer CLI discovery for developer workflows: run `<tool> --help`, inspect subcommands, use `--dry-run`, `--verbose`, and `--format json` when available before committing changes.
-- Prefer small composable CLIs over loading large tool catalogs into context. Use MCP-style integrations only when governance, multi-tenant permissions, or non-CLI APIs justify the schema overhead.
+- Prefer small composable CLIs over loading large tool catalogs into context. Use MCP-style integrations only when governance, multi-tenant access boundaries, or non-CLI APIs justify the schema overhead.
 - bash commands run inside the Docker container and are audited. If bash output is over 50k chars, the response is truncated and the full output is saved under `/tmp/pebble_shell_tool_outputs/`.
 - `ls` lists workspace files. Use it before assuming a path exists.
 - `glob` finds workspace files by glob pattern.
@@ -20,7 +20,7 @@
 - `public_sites_list` lists currently published static sites.
 - `send_file` sends a workspace file back to the user; use it for generated PDFs, reports, images, or archives.
 - Chat uploads are saved under `sent_attachments`. Inspect non-image files with normal file/bash tools when relevant. Images may already be included directly in the model message, so do not re-inspect an uploaded image path unless the user asks about the saved file later.
-- `exec_command(cmd, yield_time_ms?, max_output_tokens?, workdir?, tty?, shell?, login?, justification?, prefix_rule?, sandbox_permissions?)` runs a shell command using Codex-style arguments. If it is still running after `yield_time_ms`, it returns a numeric `session_id`. Pebble accepts Codex-style sandbox fields for compatibility, but commands run inside the Docker container.
+- `exec_command(cmd, yield_time_ms?, max_output_tokens?, workdir?, tty?, shell?, login?)` runs a shell command inside the Docker container. If it is still running after `yield_time_ms`, it returns a numeric `session_id`.
 - `write_stdin(session_id, chars?, yield_time_ms?, max_output_tokens?)` writes to or polls a running `exec_command` session. Use empty `chars` to poll recent output without writing.
 - `background_task_start(prompt, folder)` starts one long-running background worker. `folder` is required; `/name` maps to `/workspace/name`, and missing folders are created.
 - `background_agents_status` shows Pebble a readable dashboard of background workers, including elapsed time, model, token usage when available, deterministic recent activity from stored events/results, and flags. It does not call an LLM.

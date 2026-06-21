@@ -93,7 +93,7 @@ Set `API_AUTH_TOKEN` before exposing local/admin routes. When set, these endpoin
 
 ## Safety Model
 
-The agent process and bash tools run inside the Docker container. File and bash tools are rooted at `AGENT_WORKSPACE` (`/workspace` in Docker). bash execution has a timeout and is allowed inside the container; Docker isolation is the primary safety boundary.
+The agent process and shell tools run inside the Docker container. File and shell tools are rooted at `AGENT_WORKSPACE` (`/workspace` in Docker). Shell commands have full control inside the container, including `sudo`; Docker isolation is the host boundary.
 
 ## V0.0.1 Runtime Model
 
@@ -103,7 +103,7 @@ The foreground can start workers with `background_task_start(prompt, folder)`, i
 
 Workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`. They self-check before completion by answering exactly `COMPLETE`, `BLOCKED`, or `NEEDS_MORE_WORK`. `NEEDS_MORE_WORK` keeps the worker running up to a bounded retry cap; `BLOCKED` and repeated incomplete checks keep the job inspectable and messageable for foreground follow-up. `background_agents_status` and `/bg` use stored events/results only and do not call an LLM. `background_task_recent_status(job_id)` can call `OPENAI_FLASH_MODEL` for one richer per-worker status summary when Pebble asks for it.
 
-Each worker is assigned a required folder. A folder like `/myproject` maps to `/workspace/myproject`; missing folders are created. Relative file/search/bash/process paths in a worker resolve from that assigned folder, while leading `/` in file tools means `/workspace`. This is prompt/tool-root isolation, not a hard filesystem sandbox. Docker Compose exposes ports `8080-8085` so several background workers can run webdev tests in parallel.
+Each worker is assigned a required folder. A folder like `/myproject` maps to `/workspace/myproject`; missing folders are created. Relative file/search/bash/exec_command paths in a worker resolve from that assigned folder, while leading `/` in file tools means `/workspace`. Docker Compose exposes ports `8080-8085` so several background workers can run webdev tests in parallel.
 
 ## Self-Improvement
 
@@ -123,7 +123,7 @@ For browser-testable pages, the agent can call `publish_static_site` to copy a w
 
 For downloadable artifacts, the agent can call `send_file` with a workspace-relative path. The active transport adapter sends the file back to the user, for example after compiling a PDF.
 
-For dev servers and other long-running commands, use Codex-style terminal sessions. `exec_command(cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, login, justification, prefix_rule, sandbox_permissions)` starts a command and returns a `session_id` when it is still running. `write_stdin(session_id, chars, yield_time_ms, max_output_tokens)` writes to or polls that session; pass empty `chars` to poll. `GET /status` also reports active sessions so a UI or Discord command can show what is still running.
+For dev servers and other long-running commands, use Codex-style terminal sessions. `exec_command(cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, login)` starts a command inside the Docker container and returns a `session_id` when it is still running. `write_stdin(session_id, chars, yield_time_ms, max_output_tokens)` writes to or polls that session; pass empty `chars` to poll. `GET /status` also reports active sessions so a UI or Discord command can show what is still running.
 
 ## Long-Running Operation
 
@@ -149,7 +149,7 @@ The default integration style is CLI-first inside Docker. The agent should disco
 
 ## Shell Execution
 
-Shell commands are audited in SQLite and run inside the Docker container workspace. For v0.0.1, Pebble allows container-local shell commands, including `sudo`, package installs, and piped install scripts; Docker isolation is the safety boundary.
+Shell commands are audited in SQLite and run inside the Docker container workspace. For v0.0.1, Pebble has full container-local shell control, including `sudo`, package installs, and piped install scripts; Docker isolation is the host boundary.
 
 ## Repository Layout
 

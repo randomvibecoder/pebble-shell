@@ -282,12 +282,9 @@ class WorkspaceTools:
                         "required": ["cmd"],
                         "properties": {
                             "cmd": {"type": "string"},
-                            "justification": {"type": "string"},
                             "login": {"type": "boolean"},
                             "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 30000},
                             "max_output_tokens": {"type": "integer"},
-                            "prefix_rule": {"type": "array", "items": {"type": "string"}},
-                            "sandbox_permissions": {"type": "string"},
                             "shell": {"type": "string"},
                             "tty": {"type": "boolean"},
                             "workdir": {"type": "string"},
