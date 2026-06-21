@@ -103,10 +103,10 @@ async def test_background_task_tools_limit_active_workers_to_four(tmp_path: Path
     agent.run_background_task = hold_until_cancelled  # type: ignore[method-assign]
 
     started = [
-        agent.tools.run("background_task_start", {"prompt": f"build site {index}", "folder": f"/site-{index}"})
+        agent.tools.run("subagent_start", {"prompt": f"build site {index}", "folder": f"/site-{index}"})
         for index in range(4)
     ]
-    fifth = agent.tools.run("background_task_start", {"prompt": "build one more", "folder": "/overflow"})
+    fifth = agent.tools.run("subagent_start", {"prompt": "build one more", "folder": "/overflow"})
 
     assert all(result.ok for result in started)
     assert not fifth.ok
@@ -117,12 +117,12 @@ async def test_background_task_tools_limit_active_workers_to_four(tmp_path: Path
     assert all("user_id" not in job and "channel_id" not in job for job in jobs)
 
     for job in jobs:
-        agent.tools.run("background_task_cancel", {"job_id": job["id"]})
+        agent.tools.run("subagent_cancel", {"job_id": job["id"]})
     await _wait_until(lambda: agent.background_store.count_active() == 0)
 
 
 @pytest.mark.asyncio
-async def test_background_task_start_sends_debug_notice_and_creates_folder(tmp_path: Path) -> None:
+async def test_subagent_start_sends_debug_notice_and_creates_folder(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     agent.bind_background_loop()
     delivered: list[str] = []
@@ -138,20 +138,20 @@ async def test_background_task_start_sends_debug_notice_and_creates_folder(tmp_p
     agent.set_deliver(deliver)
     agent.run_background_task = hold_until_cancelled  # type: ignore[method-assign]
 
-    result = agent.tools.run("background_task_start", {"prompt": "build a dashboard with a lot of detail", "folder": "/dashboards/main"})
+    result = agent.tools.run("subagent_start", {"prompt": "build a dashboard with a lot of detail", "folder": "/dashboards/main"})
 
     assert result.ok
     job = json.loads(result.output)
     assert job["folder"] == "dashboards/main"
     assert (agent.settings.agent_workspace / "dashboards/main").is_dir()
     await _wait_until(lambda: bool(delivered))
-    assert delivered[0].startswith(f"[background agent created] id={job['id']} folder=/dashboards/main prompt=build a dashboard")
-    agent.tools.run("background_task_cancel", {"job_id": job["id"]})
+    assert delivered[0].startswith(f"[subagent created] id={job['id']} folder=/dashboards/main prompt=build a dashboard")
+    agent.tools.run("subagent_cancel", {"job_id": job["id"]})
     await _wait_until(lambda: agent.background_store.count_active() == 0)
 
 
 @pytest.mark.asyncio
-async def test_background_task_pause_stops_after_current_step_and_message_resumes(tmp_path: Path) -> None:
+async def test_subagent_pause_stops_after_current_step_and_message_resumes(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("pause me", "pause me", "background_jobs/test")
 
@@ -216,25 +216,25 @@ async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_pat
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("Worker queued. Job ID: `bg_fake_123456`")),
-            FakeResponse(ToolMessage("background_task_start", {"prompt": "monitor the test sites", "folder": "/real-monitor"})),
+            FakeResponse(ToolMessage("subagent_start", {"prompt": "monitor the test sites", "folder": "/real-monitor"})),
             FakeResponse(FinalMessage("Worker started with the real tool result.")),
         ]
     )  # type: ignore[assignment]
 
     response = await agent.run_user_message(
-        "Start a background worker with background_task_start. Title: real monitor. Task: monitor the test sites.",
+        "Start a background worker with subagent_start. Title: real monitor. Task: monitor the test sites.",
     )
 
     assert response.content == "Worker started with the real tool result."
     calls = agent.client.chat.completions.calls  # type: ignore[attr-defined]
     assert len(calls) == 3
-    assert "You have not called `background_task_start`" in calls[1]["messages"][-1]["content"]
+    assert "You have not called `subagent_start`" in calls[1]["messages"][-1]["content"]
     jobs = agent.background_store.list_jobs(limit=10)
     assert len(jobs) == 1
     assert jobs[0]["folder"] == "real-monitor"
     assert jobs[0]["id"] != "bg_fake_123456"
 
-    agent.tools.run("background_task_cancel", {"job_id": jobs[0]["id"]})
+    agent.tools.run("subagent_cancel", {"job_id": jobs[0]["id"]})
     await _wait_until(lambda: agent.background_store.count_active() == 0)
 
 
@@ -258,10 +258,12 @@ async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> No
     assert any(message.get("role") == "tool" and "Wrote" in str(message.get("content")) for message in context)
     first_call = agent.client.chat.completions.calls[0]  # type: ignore[attr-defined]
     tool_names = {tool["function"]["name"] for tool in first_call["tools"]}
-    assert "background_task_start" not in tool_names
+    assert "subagent_start" not in tool_names
     system_text = "\n".join(str(message.get("content", "")) for message in first_call["messages"] if message.get("role") == "system")
     assert "Use send_msg often enough to keep foreground Pebble informed" in system_text
     assert "Summarize what changed or what you verified" in system_text
+    assert "full shell control inside the Docker container" in system_text
+    assert "may install packages, CLIs, browsers, dependencies" in system_text
     assert "Do not use exec_command as a way to hand off the assigned job" in system_text
     prompt_text = "\n".join(str(message.get("content", "")) for message in first_call["messages"])
     assert "Original Discord user" not in prompt_text
@@ -425,7 +427,7 @@ def test_background_job_canceled_rejects_messages(tmp_path: Path) -> None:
     job = agent.background_store.create_job("cancel me", "cancel", "background_jobs/test")
     agent.background_store.mark_cancelled(job.id, 0)
 
-    result = agent.tools.run("background_task_message", {"job_id": job.id, "message": "Resume this canceled worker."})
+    result = agent.tools.run("subagent_send", {"job_id": job.id, "message": "Resume this canceled worker."})
 
     assert not result.ok
     assert "not messageable" in result.output
@@ -434,14 +436,14 @@ def test_background_job_canceled_rejects_messages(tmp_path: Path) -> None:
     assert canceled.status == "canceled"
 
 
-def test_background_task_finish_deletes_inactive_job_records_and_context(tmp_path: Path) -> None:
+def test_subagent_delete_deletes_inactive_job_records_and_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make cleanup data", "cleanup", "background_jobs/test")
     agent.background_store.save_context(job.id, [{"role": "assistant", "content": "stored context"}])
     agent.background_store.enqueue_message(job.id, "queued instruction")
     agent.background_store.complete_job(job.id, "done", 1)
 
-    result = agent.tools.run("background_task_finish", {"job_id": job.id})
+    result = agent.tools.run("subagent_delete", {"job_id": job.id})
 
     assert result.ok
     assert "deleted job records and stored context" in result.output
@@ -451,11 +453,11 @@ def test_background_task_finish_deletes_inactive_job_records_and_context(tmp_pat
     assert agent.background_store.drain_messages(job.id) == []
 
 
-def test_background_task_finish_rejects_active_worker(tmp_path: Path) -> None:
+def test_subagent_delete_rejects_active_worker(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("still running", "running", "background_jobs/test")
 
-    result = agent.tools.run("background_task_finish", {"job_id": job.id})
+    result = agent.tools.run("subagent_delete", {"job_id": job.id})
 
     assert not result.ok
     assert "pause or cancel" in result.output
@@ -466,17 +468,40 @@ def test_background_tool_schema_includes_completed_resume_and_finish(tmp_path: P
     agent = _agent(tmp_path)
     definitions = {definition["function"]["name"]: definition["function"]["description"] for definition in agent.tools.definitions()}
 
-    assert "background_task_finish" in definitions
-    assert "background_task_recent_status" in definitions
-    assert "single job" in definitions["background_task_recent_status"]
-    assert "completed" in definitions["background_task_message"]
-    assert "same job id, folder, and stored context" in definitions["background_task_message"]
-    assert "Destructively delete" in definitions["background_task_finish"]
-    assert "stored context" in definitions["background_task_finish"]
+    assert "subagent_start" in definitions
+    assert "subagent_delete" in definitions
+    assert "subagent_summary" in definitions
+    assert "single job" in definitions["subagent_summary"]
+    assert "completed" in definitions["subagent_send"]
+    assert "same job id, folder, and stored context" in definitions["subagent_send"]
+    assert "Destructively delete" in definitions["subagent_delete"]
+    assert "stored context" in definitions["subagent_delete"]
+
+
+def test_old_background_tool_names_are_not_available(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    definitions = {definition["function"]["name"] for definition in agent.tools.definitions()}
+    old_names = {
+        "background_task_start",
+        "background_task_status",
+        "background_tasks_list",
+        "background_agents_status",
+        "background_task_recent_status",
+        "background_task_ask",
+        "background_task_cancel",
+        "background_task_pause",
+        "background_task_message",
+        "background_task_finish",
+        "background_task_events",
+    }
+
+    assert not old_names & definitions
+    for name in old_names:
+        assert not agent.tools.run(name, {}).ok
 
 
 @pytest.mark.asyncio
-async def test_background_agents_status_table_uses_stored_activity_without_flash(tmp_path: Path) -> None:
+async def test_subagent_dashboard_table_uses_stored_activity_without_flash(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
@@ -499,7 +524,7 @@ async def test_background_agents_status_table_uses_stored_activity_without_flash
 
 
 @pytest.mark.asyncio
-async def test_background_task_recent_status_uses_flash_for_one_worker(tmp_path: Path) -> None:
+async def test_subagent_summary_uses_flash_for_one_worker(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
@@ -515,7 +540,7 @@ async def test_background_task_recent_status_uses_flash_for_one_worker(tmp_path:
     assert len(agent.client.chat.completions.calls) == 1  # type: ignore[attr-defined]
 
 
-def test_background_agents_status_yaml_is_human_readable() -> None:
+def test_subagent_dashboard_yaml_is_human_readable() -> None:
     yaml = _render_status_yaml(
         [
             {
@@ -544,7 +569,7 @@ def test_background_agents_status_yaml_is_human_readable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_background_task_recent_status_falls_back_when_flash_fails(tmp_path: Path) -> None:
+async def test_subagent_summary_falls_back_when_flash_fails(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
@@ -562,7 +587,7 @@ async def test_background_task_recent_status_falls_back_when_flash_fails(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_background_task_message_reaches_running_worker_context(tmp_path: Path) -> None:
+async def test_subagent_send_reaches_running_worker_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
     agent.background_store.start_job(job.id)
@@ -577,7 +602,7 @@ async def test_background_task_message_reaches_running_worker_context(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_background_task_ask_uses_no_tool_exact_context(tmp_path: Path) -> None:
+async def test_subagent_ask_uses_no_tool_exact_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
     agent.background_store.save_context(
@@ -618,7 +643,7 @@ async def test_end_to_end_onboarding_four_parallel_websites_and_midrun_question(
         completions.append(
             FakeResponse(
                 ToolMessage(
-                    "background_task_start",
+                    "subagent_start",
                         {
                             "prompt": f"Build website {index + 1} in your assigned folder and make the background color color-{index + 1}.",
                             "folder": f"/website-{index + 1}",
@@ -666,7 +691,7 @@ async def test_end_to_end_onboarding_four_parallel_websites_and_midrun_question(
         [
             FakeResponse(
                 ToolMessage(
-                    "background_task_ask",
+                    "subagent_ask",
                     {"job_id": target, "question": "what color is the website background?"},
                 )
             ),
@@ -692,7 +717,7 @@ async def test_end_to_end_onboarding_four_parallel_websites_and_midrun_question(
     assert "color-" in answer
 
     for job in jobs:
-        agent.tools.run("background_task_cancel", {"job_id": job["id"]})
+        agent.tools.run("subagent_cancel", {"job_id": job["id"]})
     await _wait_until(lambda: agent.background_store.count_active() == 0)
 
 

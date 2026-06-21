@@ -503,28 +503,28 @@ class WorkspaceTools:
                 return self.cron_job_set_enabled(arguments["name"], bool(arguments["enabled"]))
             if name == "shell_audit_recent":
                 return self.shell_audit_recent()
-            if name == "background_task_start":
-                return self.background_task_start(arguments["prompt"], arguments["folder"])
-            if name == "background_task_status":
-                return self.background_task_status(arguments["job_id"])
-            if name == "background_tasks_list":
-                return self.background_tasks_list(int(arguments.get("limit", 10)), arguments.get("status"))
-            if name == "background_agents_status":
-                return self.background_agents_status(int(arguments.get("limit", 10)), arguments.get("status"))
-            if name == "background_task_recent_status":
-                return self.background_task_recent_status(arguments["job_id"])
-            if name == "background_task_ask":
-                return self.background_task_ask(arguments["job_id"], arguments["question"])
-            if name == "background_task_cancel":
-                return self.background_task_cancel(arguments["job_id"])
-            if name == "background_task_pause":
-                return self.background_task_pause(arguments["job_id"])
-            if name == "background_task_message":
-                return self.background_task_message(arguments["job_id"], arguments["message"])
-            if name == "background_task_finish":
-                return self.background_task_finish(arguments["job_id"])
-            if name == "background_task_events":
-                return self.background_task_events(arguments["job_id"], int(arguments.get("limit", 20)))
+            if name == "subagent_start":
+                return self.subagent_start(arguments["prompt"], arguments["folder"])
+            if name == "subagent_status":
+                return self.subagent_status(arguments["job_id"])
+            if name == "subagent_list":
+                return self.subagent_list(int(arguments.get("limit", 10)), arguments.get("status"))
+            if name == "subagent_dashboard":
+                return self.subagent_dashboard(int(arguments.get("limit", 10)), arguments.get("status"))
+            if name == "subagent_summary":
+                return self.subagent_summary(arguments["job_id"])
+            if name == "subagent_ask":
+                return self.subagent_ask(arguments["job_id"], arguments["question"])
+            if name == "subagent_cancel":
+                return self.subagent_cancel(arguments["job_id"])
+            if name == "subagent_pause":
+                return self.subagent_pause(arguments["job_id"])
+            if name == "subagent_send":
+                return self.subagent_send(arguments["job_id"], arguments["message"])
+            if name == "subagent_delete":
+                return self.subagent_delete(arguments["job_id"])
+            if name == "subagent_events":
+                return self.subagent_events(arguments["job_id"], int(arguments.get("limit", 20)))
         except KeyError as exc:
             return ToolResult(ok=False, output=f"Missing required argument: {exc}")
         except Exception as exc:  # noqa: BLE001 - tool errors should return to the model.
@@ -936,57 +936,57 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Shell audit store is not enabled")
         return ToolResult(ok=True, output=json.dumps(self.shell_audit.recent(), sort_keys=True))
 
-    def background_task_start(self, prompt: str, folder: str) -> ToolResult:
+    def subagent_start(self, prompt: str, folder: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.start(prompt, folder)
 
-    def background_task_status(self, job_id: str) -> ToolResult:
+    def subagent_status(self, job_id: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.status_tool(job_id)
 
-    def background_tasks_list(self, limit: int = 10, status: str | None = None) -> ToolResult:
+    def subagent_list(self, limit: int = 10, status: str | None = None) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.list_tool(limit, status)
 
-    def background_agents_status(self, limit: int = 10, status: str | None = None) -> ToolResult:
+    def subagent_dashboard(self, limit: int = 10, status: str | None = None) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.status_table_tool(limit, status)
 
-    def background_task_recent_status(self, job_id: str) -> ToolResult:
+    def subagent_summary(self, job_id: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.recent_status_tool(job_id)
 
-    def background_task_ask(self, job_id: str, question: str) -> ToolResult:
+    def subagent_ask(self, job_id: str, question: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.ask_tool(job_id, question)
 
-    def background_task_cancel(self, job_id: str) -> ToolResult:
+    def subagent_cancel(self, job_id: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.cancel_tool(job_id)
 
-    def background_task_pause(self, job_id: str) -> ToolResult:
+    def subagent_pause(self, job_id: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.pause_tool(job_id)
 
-    def background_task_message(self, job_id: str, message: str) -> ToolResult:
+    def subagent_send(self, job_id: str, message: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.message_tool(job_id, message)
 
-    def background_task_finish(self, job_id: str) -> ToolResult:
+    def subagent_delete(self, job_id: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.finish_tool(job_id)
 
-    def background_task_events(self, job_id: str, limit: int = 20) -> ToolResult:
+    def subagent_events(self, job_id: str, limit: int = 20) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.events_tool(job_id, limit)
@@ -1134,7 +1134,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_start",
+                "name": "subagent_start",
                     "description": "Start a write-capable background worker for long implementation, testing, research, or debugging work. The folder is required; leading / means /workspace and missing folders are created.",
                 "parameters": {
                     "type": "object",
@@ -1149,7 +1149,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_status",
+                "name": "subagent_status",
                     "description": "Get raw status, result, counters, prompt, and recent events for one background worker job by job id.",
                 "parameters": {
                     "type": "object",
@@ -1161,8 +1161,8 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_tasks_list",
-                    "description": "List recent background worker jobs as structured JSON, optionally filtered by status. Use background_agents_status when you want the readable supervisor table.",
+                "name": "subagent_list",
+                    "description": "List recent background worker jobs as structured JSON, optionally filtered by status. Use subagent_dashboard when you want the readable supervisor table.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1175,7 +1175,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_agents_status",
+                "name": "subagent_dashboard",
                 "description": (
                     "Show Pebble a readable supervisor table for background agents: elapsed time, model, status, "
                     "steps, token usage when available, deterministic recent activity from stored events/results, and warning flags. "
@@ -1193,7 +1193,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_recent_status",
+                "name": "subagent_summary",
                 "description": "Get a richer recent-status summary for one background worker. This may call the flash model for that single job only and falls back to stored events/results if flash fails.",
                 "parameters": {
                     "type": "object",
@@ -1205,7 +1205,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_ask",
+                "name": "subagent_ask",
                 "description": "Ask a no-tool one-shot LLM a focused question over one worker's stored context without resuming or changing that worker.",
                 "parameters": {
                     "type": "object",
@@ -1220,7 +1220,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_cancel",
+                "name": "subagent_cancel",
                 "description": "Request cooperative cancellation for one background worker.",
                 "parameters": {
                     "type": "object",
@@ -1232,7 +1232,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_pause",
+                "name": "subagent_pause",
                 "description": "Request that one background worker pause after its current model/tool step finishes.",
                 "parameters": {
                     "type": "object",
@@ -1244,7 +1244,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_message",
+                "name": "subagent_send",
                 "description": "Send a new foreground instruction to a running, pausing, paused, blocked, or completed background worker. Paused, blocked, and completed workers resume with the same job id, folder, and stored context.",
                 "parameters": {
                     "type": "object",
@@ -1259,7 +1259,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_finish",
+                "name": "subagent_delete",
                 "description": "Destructively delete one inactive background worker's records, queued messages, events, and stored context. Use only when the worker is definitely no longer needed or cleanup/storage pressure requires it. Active workers must be paused or canceled first.",
                 "parameters": {
                     "type": "object",
@@ -1271,7 +1271,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "background_task_events",
+                "name": "subagent_events",
                 "description": "Read recent internal events for one background worker.",
                 "parameters": {
                     "type": "object",

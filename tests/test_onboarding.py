@@ -135,9 +135,12 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
 
     core_prompt = fake_client.chat.completions.calls[0]["messages"][0]["content"]
     assert "one foreground supervisor and up to four long-running background workers" in core_prompt
-    assert "background_task_start" in core_prompt
+    assert "subagent_start" in core_prompt
+    assert "The user does not need to explicitly ask for a subagent" in core_prompt
+    assert "Subagents run inside the Docker container with container-local sudo/root capability" in core_prompt
+    assert "After starting a subagent, write its job id, folder, and task to context/MEMORY.md" in core_prompt
     assert "running/paused/blocked/completed worker" in core_prompt
-    assert "Use background_task_finish only for destructive cleanup" in core_prompt
+    assert "Use subagent_delete only for destructive cleanup" in core_prompt
     assert "exec_command for shell commands" in core_prompt
     assert "write_stdin(session_id" in core_prompt
     assert "context/MEMORY.md" in core_prompt

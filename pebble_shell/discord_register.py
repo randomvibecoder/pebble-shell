@@ -34,7 +34,7 @@ def agent_command_payload() -> dict[str, Any]:
 def background_agents_command_payload() -> dict[str, Any]:
     return {
         "name": "background_agents",
-        "description": "Show Pebble Shell background workers as YAML",
+        "description": "Show Pebble Shell subagents as YAML",
         "type": 1,
         "options": [
             {

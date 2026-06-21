@@ -44,7 +44,7 @@ Tool use:
 - The agent process runs as `agent` inside its Docker container and has passwordless `sudo` for container-local administration. Shell commands have full control inside the container, including `sudo`; this is container privilege, not host root.
 - For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
 - For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
-- For background work: use background_task_start(prompt, folder) to start a worker. The folder is required; `/name` means `/workspace/name`, and missing folders are created. Use background_agents_status first when you need a cheap dashboard of all workers; it uses stored events/results and does not call an LLM. Use background_task_recent_status for a richer one-worker status summary when you need more detail about a specific worker; it may call the flash model only for that job. Use background_task_status/events for one worker's raw details; use background_task_ask for a focused question over one worker's context; use background_task_pause to pause after the current step; use background_task_message to resume or redirect a running/paused/blocked/completed worker. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Use background_task_cancel to stop active work. Use background_task_finish only for destructive cleanup when an inactive worker is definitely no longer needed; it deletes that worker's records, events, queued messages, and stored context.
+- For background work: use subagent_start(prompt, folder) to start a worker. Use subagents for tasks likely to take a long time, require many tool calls, run servers/tests, perform broad research, or continue while you stay responsive to the user. The user does not need to explicitly ask for a subagent; start one when the task shape makes background work appropriate. Subagents run inside the Docker container with container-local sudo/root capability and may install packages, CLIs, browsers, dependencies, or other tools needed for their assigned work. The folder is required; `/name` means `/workspace/name`, and missing folders are created. After starting a subagent, write its job id, folder, and task to context/MEMORY.md so you can keep track of active and recent subagents. Use subagent_dashboard first when you need a cheap dashboard of all workers; it uses stored events/results and does not call an LLM. Use subagent_summary for a richer one-worker status summary when you need more detail about a specific worker; it may call the flash model only for that job. Use subagent_status and subagent_events for one worker's raw details; use subagent_ask for a focused question over one worker's context; use subagent_pause to pause after the current step; use subagent_send to resume or redirect a running/paused/blocked/completed worker. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Use subagent_cancel to stop active work. Use subagent_delete only for destructive cleanup when an inactive worker is definitely no longer needed; it deletes that worker's records, events, queued messages, and stored context.
 - Do not directly edit an active worker's assigned folder; ask or supervise that worker instead.
 - Use exec_command for shell commands with cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, and login. If a command is still running after yield_time_ms, keep the returned session_id and poll it with write_stdin(session_id, chars=""). Use write_stdin(session_id, chars) for interactive input. Commands run inside the Docker container.
 - Use websearch for current external research when EXA_API_KEY is configured.
@@ -130,6 +130,7 @@ Rules:
 - Use send_msg often enough to keep foreground Pebble informed during long work. Send a brief update whenever you do something major: start a substantial phase, finish a meaningful change, learn an important fact, begin verification, finish verification, or discover a blocker. Summarize what changed or what you verified in one or two short sentences, ideally under 400 characters. This messages foreground Pebble, not the user directly.
 - You have no heartbeat. Work until the assigned task is complete, blocked, paused, or canceled.
 - Edit only your assigned folder and /tmp unless the foreground prompt explicitly grants another path.
+- You have full shell control inside the Docker container, including container-local sudo/root capability. You may install packages, CLIs, browsers, dependencies, or other tools needed for your assigned work.
 - All relative file, search, bash, and exec_command paths operate from your assigned folder. For these tools, a leading / means /workspace, not container root.
 - For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
 - For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
@@ -478,17 +479,17 @@ class CodingAgent:
                 if (
                     include_background_tools
                     and background_job_id is None
-                    and "background_task_start" not in called_tool_names
-                    and _requires_background_task_start(user_memory_contents)
+                    and "subagent_start" not in called_tool_names
+                    and _requires_subagent_start(user_memory_contents)
                     and step < self.settings.max_agent_steps
                 ):
                     messages.append(
                         {
                             "role": "user",
                             "content": (
-                                "The user explicitly asked you to start a background worker. "
-                                "You have not called `background_task_start` in this turn. "
-                                "Call `background_task_start` now with a prompt and folder, then report only the real job id returned by the tool."
+                                "The user explicitly asked you to start a subagent/background worker. "
+                                "You have not called `subagent_start` in this turn. "
+                                "Call `subagent_start` now with a prompt and folder, then report only the real job id returned by the tool."
                             ),
                         }
                     )
@@ -1125,10 +1126,12 @@ def _is_heartbeat_ack(content: str, ack_max_chars: int) -> bool:
     return False
 
 
-def _requires_background_task_start(user_memory_contents: list[str]) -> bool:
+def _requires_subagent_start(user_memory_contents: list[str]) -> bool:
     text = "\n".join(user_memory_contents).lower()
     markers = (
-        "background_task_start",
+        "subagent_start",
+        "start a subagent",
+        "start subagent",
         "start a background worker",
         "start a background task",
         "start background worker",

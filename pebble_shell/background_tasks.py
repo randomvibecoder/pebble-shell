@@ -489,7 +489,7 @@ class BackgroundTaskService:
         if not self.agent._deliver or not self._loop or self._loop.is_closed():
             return
         excerpt = prompt.replace("\n", " ")[:100]
-        self._loop.create_task(self.agent._deliver(f"[background agent created] id={job_id} folder=/{folder} prompt={excerpt}"))
+        self._loop.create_task(self.agent._deliver(f"[subagent created] id={job_id} folder=/{folder} prompt={excerpt}"))
 
     def status(self, job_id: str) -> dict[str, Any]:
         job = self.store.get_job(job_id)
@@ -793,7 +793,7 @@ class BackgroundTaskService:
         job = self.store.get_job(job_id)
         if not job:
             return
-        prefix = f"[background agent {event}] id={job.id} folder=/{job.folder}"
+        prefix = f"[subagent {event}] id={job.id} folder=/{job.folder}"
         progress = f"Progress message: {progress_message[:4000]}\n\n" if progress_message else ""
         prompt = (
             f"{prefix}\n\n"
@@ -1028,7 +1028,7 @@ def _fallback_attention_summary(job: BackgroundJob, events: list[dict[str, Any]]
         f"Background job {job.id} needs foreground attention. "
         f"Status: {job.status}. Latest event: {latest_text}. "
         f"Worker result: {result}. "
-        "Next action: inspect the job events/context, then send a focused background_task_message or cancel it."
+        "Next action: inspect the job events/context, then send a focused subagent_send or cancel it."
     )
 
 
