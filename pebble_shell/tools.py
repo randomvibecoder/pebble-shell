@@ -529,6 +529,8 @@ class WorkspaceTools:
                 return self.background_tasks_list(int(arguments.get("limit", 10)), arguments.get("status"))
             if name == "background_agents_status":
                 return self.background_agents_status(int(arguments.get("limit", 10)), arguments.get("status"))
+            if name == "background_task_recent_status":
+                return self.background_task_recent_status(arguments["job_id"])
             if name == "background_task_ask":
                 return self.background_task_ask(arguments["job_id"], arguments["question"])
             if name == "background_task_cancel":
@@ -968,6 +970,11 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.status_table_tool(limit, status)
 
+    def background_task_recent_status(self, job_id: str) -> ToolResult:
+        if not self.background_tasks:
+            return ToolResult(ok=False, output="Background task service is not enabled")
+        return self.background_tasks.recent_status_tool(job_id)
+
     def background_task_ask(self, job_id: str, question: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
@@ -1185,7 +1192,8 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
                 "name": "background_agents_status",
                 "description": (
                     "Show Pebble a readable supervisor table for background agents: elapsed time, model, status, "
-                    "steps, token usage when available, recent activity summarized by the flash model, and warning flags."
+                    "steps, token usage when available, deterministic recent activity from stored events/results, and warning flags. "
+                    "This does not call an LLM."
                 ),
                 "parameters": {
                     "type": "object",
@@ -1193,6 +1201,18 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
                         "status": {"type": "string"},
                     },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "background_task_recent_status",
+                "description": "Get a richer recent-status summary for one background worker. This may call the flash model for that single job only and falls back to stored events/results if flash fails.",
+                "parameters": {
+                    "type": "object",
+                    "required": ["job_id"],
+                    "properties": {"job_id": {"type": "string"}},
                 },
             },
         },

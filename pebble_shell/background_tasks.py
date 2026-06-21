@@ -518,22 +518,36 @@ class BackgroundTaskService:
 
     async def status_table(self, limit: int = 10, status: str | None = None) -> dict[str, Any]:
         rows = []
-        flash_available = True
         for item in self.store.list_jobs(limit, status):
             job = self.store.get_job(str(item["id"]))
             if not job:
                 continue
             events = self.store.list_events(job.id, limit=20)
-            if flash_available:
-                try:
-                    activity = await self._summarize_recent_activity(job, events)
-                except Exception:  # noqa: BLE001 - one flash outage should not slow every row in the table.
-                    flash_available = False
-                    activity = _fallback_recent_activity(job, events)
-            else:
-                activity = _fallback_recent_activity(job, events)
-            rows.append(_status_row(job, events, activity))
+            rows.append(_status_row(job, events, _fallback_recent_activity(job, events)))
         return {"markdown": _render_status_table(rows), "jobs": rows}
+
+    def recent_status_tool(self, job_id: str) -> ToolResult:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return ToolResult(ok=False, output="Background task runner is not attached to a running event loop")
+        future = asyncio.run_coroutine_threadsafe(self.recent_status(job_id), loop)
+        return ToolResult(ok=True, output=json.dumps(future.result(), sort_keys=True))
+
+    async def recent_status(self, job_id: str) -> dict[str, Any]:
+        job = self.store.get_job(job_id)
+        if not job:
+            raise ValueError(f"Unknown background job: {job_id}")
+        events = self.store.list_events(job.id, limit=20)
+        try:
+            activity = await self._summarize_recent_activity(job, events)
+            source = "flash"
+        except Exception:  # noqa: BLE001 - this is an optional richer status path.
+            activity = _fallback_recent_activity(job, events)
+            source = "fallback"
+        row = _status_row(job, events, activity)
+        row["summary_source"] = source
+        row["events"] = events
+        return row
 
     def events_tool(self, job_id: str, limit: int = 20) -> ToolResult:
         if not self.store.get_job(job_id):

@@ -465,6 +465,8 @@ def test_background_tool_schema_includes_completed_resume_and_finish(tmp_path: P
     definitions = {definition["function"]["name"]: definition["function"]["description"] for definition in agent.tools.definitions()}
 
     assert "background_task_finish" in definitions
+    assert "background_task_recent_status" in definitions
+    assert "single job" in definitions["background_task_recent_status"]
     assert "completed" in definitions["background_task_message"]
     assert "same job id, folder, and stored context" in definitions["background_task_message"]
     assert "Destructively delete" in definitions["background_task_finish"]
@@ -472,7 +474,7 @@ def test_background_tool_schema_includes_completed_resume_and_finish(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_background_agents_status_table_uses_flash_activity(tmp_path: Path) -> None:
+async def test_background_agents_status_table_uses_stored_activity_without_flash(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
@@ -490,7 +492,25 @@ async def test_background_agents_status_table_uses_flash_activity(tmp_path: Path
     assert row["model"] == "claude-haiku-4-5-20251001"
     assert row["tokens"] == "120"
     assert row["tool_calls"] == 1
-    assert "Done: wrote index.html" in row["recent_activity"]
+    assert "tool_call: write: ok" in row["recent_activity"]
+    assert agent.client.chat.completions.calls == []  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_background_task_recent_status_uses_flash_for_one_worker(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
+    agent.background_store.start_job(job.id)
+    agent.background_store.add_event(job.id, "tool_call", "write: ok")
+    agent.background_store.save_context(job.id, [{"role": "assistant", "content": "Wrote index.html."}])
+    agent.client = FakeClient([FakeResponse(FinalMessage("Done: wrote index.html. Now: running browser check."))])  # type: ignore[assignment]
+
+    status = await agent.background_tasks.recent_status(job.id)
+
+    assert status["job_id"] == job.id
+    assert status["summary_source"] == "flash"
+    assert "Done: wrote index.html" in status["recent_activity"]
+    assert len(agent.client.chat.completions.calls) == 1  # type: ignore[attr-defined]
 
 
 def test_background_agents_status_yaml_is_human_readable() -> None:
@@ -522,21 +542,21 @@ def test_background_agents_status_yaml_is_human_readable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_background_agents_status_table_falls_back_when_flash_fails(tmp_path: Path) -> None:
+async def test_background_task_recent_status_falls_back_when_flash_fails(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.add_event(job.id, "tool_call", "write: ok")
+
     async def fail_flash(**kwargs):
         raise RuntimeError("flash unavailable")
 
     agent._flash_completion = fail_flash  # type: ignore[method-assign]
 
-    status = await agent.background_tasks.status_table(limit=5)
+    status = await agent.background_tasks.recent_status(job.id)
 
-    row = status["jobs"][0]
-    assert "tool_call: write: ok" in row["recent_activity"]
-    assert "flash" not in row["recent_activity"].lower()
+    assert status["summary_source"] == "fallback"
+    assert "tool_call: write: ok" in status["recent_activity"]
 
 
 @pytest.mark.asyncio
