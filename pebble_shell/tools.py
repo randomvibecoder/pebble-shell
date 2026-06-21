@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import mimetypes
 import shutil
 import shlex
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
-from playwright.sync_api import sync_playwright
 from pydantic import BaseModel
 
 from .cron import CronStore, dumps_cron_state
@@ -25,6 +26,7 @@ from .self_improvement import SelfImprovementStore
 
 MAX_READ_FILE_BYTES = 40_000
 MAX_READ_FILE_CHARS = 40_000
+BASH_OUTPUT_LIMIT_CHARS = 50_000
 MAX_INSPECT_IMAGE_BYTES = 4_000_000
 MAX_SEND_FILE_BYTES = 25_000_000
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
@@ -59,16 +61,21 @@ class WorkspaceTools:
         file_sender: FileSender | None = None,
         text_sender: TextSender | None = None,
         max_send_file_bytes: int = MAX_SEND_FILE_BYTES,
+        cwd: Path | None = None,
     ) -> None:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.cwd = (cwd or self.root).resolve()
+        if self.cwd != self.root and self.root not in self.cwd.parents:
+            raise ValueError(f"Tool cwd escapes workspace: {self.cwd}")
+        self.cwd.mkdir(parents=True, exist_ok=True)
         self.shell_timeout_seconds = shell_timeout_seconds
         self.runtime_config = runtime_config
         self.self_improvement = self_improvement
         self.cron = cron
         self.shell_audit = shell_audit
         self.memory = memory
-        self.processes = BackgroundProcessManager(self.root)
+        self.processes = BackgroundProcessManager(self.root, self.cwd)
         self.exa = ExaSearchClient(exa_api_key, exa_base_url)
         self.background_tasks = background_tasks
         self.openai_api_key = openai_api_key
@@ -86,12 +93,12 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "list_files",
-                    "description": "List files under the agent workspace.",
+                    "name": "ls",
+                    "description": "List files under a workspace path. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string", "description": "Workspace-relative directory path."}
+                            "path": {"type": "string", "description": "Directory or file path."}
                         },
                     },
                 },
@@ -99,18 +106,15 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "browser_visit",
-                    "description": "Use a headless Chromium browser to visit a URL and return title, current URL, and visible text excerpt.",
+                    "name": "glob",
+                    "description": "Find workspace files by glob pattern. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
                     "parameters": {
                         "type": "object",
-                        "required": ["url"],
+                        "required": ["pattern"],
                         "properties": {
-                            "url": {"type": "string"},
-                            "wait_until": {
-                                "type": "string",
-                                "enum": ["load", "domcontentloaded", "networkidle"],
-                                "default": "domcontentloaded",
-                            },
+                            "pattern": {"type": "string", "description": "Glob pattern such as **/*.py or *.md."},
+                            "path": {"type": "string", "description": "Directory to search from.", "default": "."},
+                            "max_results": {"type": "integer", "minimum": 1, "maximum": 1000},
                         },
                     },
                 },
@@ -118,13 +122,29 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "inspect_image",
-                    "description": "Inspect a local workspace image with the configured model. Use this for PNG/JPEG/WebP/GIF files instead of read_file.",
+                    "name": "grep",
+                    "description": "Search text files with a regex pattern. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["pattern"],
+                        "properties": {
+                            "pattern": {"type": "string"},
+                            "path": {"type": "string", "default": "."},
+                            "max_results": {"type": "integer", "minimum": 1, "maximum": 1000},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_image",
+                    "description": "Inspect a local workspace image with the configured model. Use this for PNG/JPEG/WebP/GIF files instead of read.",
                     "parameters": {
                         "type": "object",
                         "required": ["path"],
                         "properties": {
-                            "path": {"type": "string", "description": "Workspace-relative image path."},
+                            "path": {"type": "string", "description": "Image path."},
                             "question": {
                                 "type": "string",
                                 "description": "Optional focused question about the image.",
@@ -136,7 +156,7 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "exa_search",
+                    "name": "websearch",
                     "description": "Search the web with the Exa API for current or external information. Requires EXA_API_KEY.",
                     "parameters": {
                         "type": "object",
@@ -151,8 +171,8 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "read_file",
-                    "description": "Read a text file from the agent workspace.",
+                    "name": "read",
+                    "description": "Read a UTF-8 text file. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
                     "parameters": {
                         "type": "object",
                         "required": ["path"],
@@ -165,8 +185,8 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "write_file",
-                    "description": "Write UTF-8 text to a file in the agent workspace.",
+                    "name": "write",
+                    "description": "Write UTF-8 text to a file. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
                     "parameters": {
                         "type": "object",
                         "required": ["path", "content"],
@@ -180,7 +200,7 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "edit_file",
+                    "name": "edit",
                     "description": (
                         "Edit a UTF-8 workspace text file by replacing an exact old string with a new string. "
                         "Good for small targeted edits."
@@ -200,7 +220,7 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "apply_patch",
+                    "name": "patch",
                     "description": (
                         "Apply a patch to workspace files. Supports Codex-style patches with "
                         "*** Begin Patch, *** Add File, *** Update File, *** Delete File, and *** End Patch. "
@@ -241,8 +261,8 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "shell",
-                    "description": "Run a shell command inside the container and agent workspace.",
+                    "name": "bash",
+                    "description": "Run a bash command inside the container. In a background worker, commands run from the assigned folder.",
                     "parameters": {
                         "type": "object",
                         "required": ["command"],
@@ -439,26 +459,30 @@ class WorkspaceTools:
             return ToolResult(ok=False, output=f"Invalid JSON arguments: {exc}")
 
         try:
-            if name == "list_files":
-                return self.list_files(arguments.get("path", "."))
-            if name == "read_file":
-                return self.read_file(arguments["path"])
-            if name == "write_file":
-                return self.write_file(arguments["path"], arguments["content"])
-            if name == "edit_file":
-                return self.edit_file(arguments["path"], arguments["old"], arguments["new"], bool(arguments.get("replace_all", False)))
-            if name == "apply_patch":
-                return self.apply_patch(arguments["patch"])
+            if name == "ls":
+                return self.ls(arguments.get("path", "."))
+            if name == "glob":
+                return self.glob(arguments["pattern"], arguments.get("path", "."), int(arguments.get("max_results", 100)))
+            if name == "grep":
+                return self.grep(arguments["pattern"], arguments.get("path", "."), int(arguments.get("max_results", 100)))
+            if name == "read":
+                return self.read(arguments["path"])
+            if name == "write":
+                return self.write(arguments["path"], arguments["content"])
+            if name == "edit":
+                return self.edit(arguments["path"], arguments["old"], arguments["new"], bool(arguments.get("replace_all", False)))
+            if name == "patch":
+                return self.patch(arguments["patch"])
             if name == "publish_static_site":
                 return self.publish_static_site(arguments["source_path"], arguments["name"])
-            if name == "send_file_to_user":
-                return self.send_file_to_user(arguments["path"])
+            if name == "send_file":
+                return self.send_file(arguments["path"])
             if name == "send_msg":
                 return self.send_msg(arguments["msg"])
             if name == "public_sites_list":
                 return self.public_sites_list()
-            if name == "shell":
-                return self.shell(arguments["command"])
+            if name == "bash":
+                return self.bash(arguments["command"])
             if name == "process_start":
                 return self.process_start(arguments["name"], arguments["command"])
             if name == "processes_list":
@@ -469,12 +493,10 @@ class WorkspaceTools:
                 return self.process_logs(arguments["name"], int(arguments.get("max_chars", 4000)))
             if name == "process_stop":
                 return self.process_stop(arguments["name"])
-            if name == "browser_visit":
-                return self.browser_visit(arguments["url"], arguments.get("wait_until", "domcontentloaded"))
-            if name == "inspect_image":
-                return self.inspect_image(arguments["path"], arguments.get("question", "Describe this image."))
-            if name == "exa_search":
-                return self.exa_search(arguments["query"], int(arguments.get("num_results", 5)))
+            if name == "read_image":
+                return self.read_image(arguments["path"], arguments.get("question", "Describe this image."))
+            if name == "websearch":
+                return self.websearch(arguments["query"], int(arguments.get("num_results", 5)))
             if name == "get_runtime_config":
                 return self.get_runtime_config()
             if name == "set_runtime_config":
@@ -499,7 +521,7 @@ class WorkspaceTools:
             if name == "shell_audit_recent":
                 return self.shell_audit_recent()
             if name == "background_task_start":
-                return self.background_task_start(arguments["prompt"], arguments.get("title"))
+                return self.background_task_start(arguments["prompt"], arguments["folder"])
             if name == "background_task_status":
                 return self.background_task_status(arguments["job_id"])
             if name == "background_tasks_list":
@@ -510,6 +532,8 @@ class WorkspaceTools:
                 return self.background_task_ask(arguments["job_id"], arguments["question"])
             if name == "background_task_cancel":
                 return self.background_task_cancel(arguments["job_id"])
+            if name == "background_task_pause":
+                return self.background_task_pause(arguments["job_id"])
             if name == "background_task_message":
                 return self.background_task_message(arguments["job_id"], arguments["message"])
             if name == "background_task_events":
@@ -521,7 +545,7 @@ class WorkspaceTools:
 
         return ToolResult(ok=False, output=f"Unknown tool: {name}")
 
-    def list_files(self, path: str = ".") -> ToolResult:
+    def ls(self, path: str = ".") -> ToolResult:
         try:
             target = self._resolve(path)
         except ValueError as exc:
@@ -537,7 +561,7 @@ class WorkspaceTools:
             entries.append(f"{child.relative_to(self.root).as_posix()}{suffix}")
         return ToolResult(ok=True, output="\n".join(entries) or "(empty)")
 
-    def read_file(self, path: str) -> ToolResult:
+    def read(self, path: str) -> ToolResult:
         try:
             target = self._resolve(path)
         except ValueError as exc:
@@ -562,13 +586,13 @@ class WorkspaceTools:
             truncated = True
         if truncated:
             content += (
-                f"\n[read_file truncated at {min(MAX_READ_FILE_BYTES, MAX_READ_FILE_CHARS)} bytes/chars. "
+                f"\n[read truncated at {min(MAX_READ_FILE_BYTES, MAX_READ_FILE_CHARS)} bytes/chars. "
                 "Use targeted shell commands such as sed, rg, head, tail, wc, or file-specific extractors "
                 "to inspect the remaining content.]"
             )
         return ToolResult(ok=True, output=content)
 
-    def write_file(self, path: str, content: str) -> ToolResult:
+    def write(self, path: str, content: str) -> ToolResult:
         try:
             target = self._resolve(path)
         except ValueError as exc:
@@ -577,7 +601,7 @@ class WorkspaceTools:
         target.write_text(content, encoding="utf-8")
         return ToolResult(ok=True, output=f"Wrote {len(content.encode('utf-8'))} bytes to {target.relative_to(self.root)}")
 
-    def edit_file(self, path: str, old: str, new: str, replace_all: bool = False) -> ToolResult:
+    def edit(self, path: str, old: str, new: str, replace_all: bool = False) -> ToolResult:
         if old == "":
             return ToolResult(ok=False, output="old text cannot be empty")
         try:
@@ -600,7 +624,7 @@ class WorkspaceTools:
         replacements = count if replace_all else 1
         return ToolResult(ok=True, output=f"Edited {target.relative_to(self.root)} with {replacements} replacement(s)")
 
-    def apply_patch(self, patch: str) -> ToolResult:
+    def patch(self, patch: str) -> ToolResult:
         try:
             changes = _parse_codex_patch(patch)
             outputs = []
@@ -635,6 +659,50 @@ class WorkspaceTools:
             return ToolResult(ok=True, output="\n".join(outputs) or "Patch had no changes")
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
+
+    def glob(self, pattern: str, path: str = ".", max_results: int = 100) -> ToolResult:
+        try:
+            base = self._resolve(path)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        if not base.exists():
+            return ToolResult(ok=False, output=f"No such path: {path}")
+        max_results = max(1, min(max_results, 1000))
+        if base.is_file():
+            relative = base.relative_to(self.root).as_posix()
+            matches = [relative] if fnmatch.fnmatch(base.name, pattern) or fnmatch.fnmatch(relative, pattern) else []
+            return ToolResult(ok=True, output="\n".join(matches) or "(no matches)")
+        matches = []
+        for child in sorted(base.rglob("*")):
+            if not child.is_file():
+                continue
+            relative_to_base = child.relative_to(base).as_posix()
+            relative_to_root = child.relative_to(self.root).as_posix()
+            if fnmatch.fnmatch(relative_to_base, pattern) or fnmatch.fnmatch(relative_to_root, pattern):
+                matches.append(relative_to_root)
+                if len(matches) >= max_results:
+                    break
+        return ToolResult(ok=True, output="\n".join(matches) or "(no matches)")
+
+    def grep(self, pattern: str, path: str = ".", max_results: int = 100) -> ToolResult:
+        try:
+            target = self._resolve(path)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
+        if not target.exists():
+            return ToolResult(ok=False, output=f"No such path: {path}")
+        max_results = max(1, min(max_results, 1000))
+        command = ["rg", "--line-number", "--color", "never", "--max-count", str(max_results), pattern, str(target)]
+        completed = subprocess.run(command, cwd=self.cwd, check=False, text=True, capture_output=True, timeout=self.shell_timeout_seconds)
+        output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+        if completed.returncode == 1 and not output:
+            return ToolResult(ok=True, output="(no matches)")
+        if completed.returncode not in {0, 1}:
+            return ToolResult(ok=False, output=output or f"rg exited {completed.returncode}")
+        lines = output.splitlines()
+        if len(lines) > max_results:
+            output = "\n".join(lines[:max_results]) + "\n[grep results truncated]"
+        return ToolResult(ok=True, output=output or "(no matches)")
 
     def publish_static_site(self, source_path: str, name: str) -> ToolResult:
         try:
@@ -675,7 +743,7 @@ class WorkspaceTools:
     def public_sites_list(self) -> ToolResult:
         return ToolResult(ok=True, output=json.dumps(list_public_sites(self.root), sort_keys=True))
 
-    def send_file_to_user(self, path: str) -> ToolResult:
+    def send_file(self, path: str) -> ToolResult:
         try:
             target = self._resolve(path)
         except ValueError as exc:
@@ -707,7 +775,7 @@ class WorkspaceTools:
         sent = self.text_sender(msg)
         return ToolResult(ok=True, output=sent or "Sent progress message to the user")
 
-    def shell(self, command: str) -> ToolResult:
+    def bash(self, command: str) -> ToolResult:
         try:
             shlex.split(command)[0]
         except (IndexError, ValueError) as exc:
@@ -715,7 +783,7 @@ class WorkspaceTools:
 
         completed = subprocess.run(
             command,
-            cwd=self.root,
+            cwd=self.cwd,
             shell=True,
             check=False,
             text=True,
@@ -724,8 +792,13 @@ class WorkspaceTools:
             executable="/bin/bash",
         )
         output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
-        if len(output) > 12000:
-            output = output[:12000] + "\n[output truncated]"
+        if len(output) > BASH_OUTPUT_LIMIT_CHARS:
+            full_path = _write_large_tool_output(output)
+            output = (
+                output[:BASH_OUTPUT_LIMIT_CHARS]
+                + f"\n[bash output truncated at {BASH_OUTPUT_LIMIT_CHARS} chars. "
+                + f"Full stdout/stderr saved at {full_path}; use bash commands such as sed, rg, head, tail, wc, or cat on that file to inspect specific parts.]"
+            )
         if self.shell_audit:
             self.shell_audit.record(command, completed.returncode == 0, "normal", "Allowed inside Docker container", completed.returncode, output)
         return ToolResult(ok=completed.returncode == 0, output=output or f"exit code {completed.returncode}")
@@ -754,28 +827,9 @@ class WorkspaceTools:
         status = self.processes.stop(name)
         return ToolResult(ok=True, output=json.dumps(status, sort_keys=True))
 
-    def browser_visit(self, url: str, wait_until: str = "domcontentloaded") -> ToolResult:
-        if not url.startswith(("http://", "https://")):
-            return ToolResult(ok=False, output="browser_visit only supports http:// and https:// URLs")
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.goto(url, wait_until=wait_until, timeout=20000)
-                title = page.title()
-                text = page.locator("body").inner_text(timeout=5000)
-                if len(text) > 8000:
-                    text = text[:8000] + "\n[text truncated]"
-                return ToolResult(
-                    ok=True,
-                    output=json.dumps({"url": page.url, "title": title, "text": text}, ensure_ascii=False),
-                )
-            finally:
-                browser.close()
-
-    def inspect_image(self, path: str, question: str = "Describe this image.") -> ToolResult:
+    def read_image(self, path: str, question: str = "Describe this image.") -> ToolResult:
         if not self.vision_client and not self.openai_api_key:
-            return ToolResult(ok=False, output="inspect_image requires OPENAI_API_KEY")
+            return ToolResult(ok=False, output="read_image requires OPENAI_API_KEY")
         try:
             target = self._resolve(path)
         except ValueError as exc:
@@ -807,11 +861,11 @@ class WorkspaceTools:
                 )
                 content = response.choices[0].message.content or ""
                 return ToolResult(ok=True, output=content)
-            except Exception as exc:  # noqa: BLE001 - inspect_image should use the configured fallback chain.
+            except Exception as exc:  # noqa: BLE001 - read_image should use the configured fallback chain.
                 errors.append(f"{model}: {exc}")
         return ToolResult(ok=False, output="All configured OpenAI-compatible image inspection models failed: " + " | ".join(errors))
 
-    def exa_search(self, query: str, num_results: int = 5) -> ToolResult:
+    def websearch(self, query: str, num_results: int = 5) -> ToolResult:
         return ToolResult(ok=True, output=json.dumps(self.exa.search(query, num_results), sort_keys=True))
 
     def get_runtime_config(self) -> ToolResult:
@@ -891,10 +945,10 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Shell audit store is not enabled")
         return ToolResult(ok=True, output=json.dumps(self.shell_audit.recent(), sort_keys=True))
 
-    def background_task_start(self, prompt: str, title: str | None = None) -> ToolResult:
+    def background_task_start(self, prompt: str, folder: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
-        return self.background_tasks.start(prompt, title)
+        return self.background_tasks.start(prompt, folder)
 
     def background_task_status(self, job_id: str) -> ToolResult:
         if not self.background_tasks:
@@ -921,6 +975,11 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.cancel_tool(job_id)
 
+    def background_task_pause(self, job_id: str) -> ToolResult:
+        if not self.background_tasks:
+            return ToolResult(ok=False, output="Background task service is not enabled")
+        return self.background_tasks.pause_tool(job_id)
+
     def background_task_message(self, job_id: str, message: str) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
@@ -932,7 +991,11 @@ class WorkspaceTools:
         return self.background_tasks.events_tool(job_id, limit)
 
     def _resolve(self, path: str) -> Path:
-        target = (self.root / path).resolve()
+        raw = str(path or ".")
+        if raw.startswith("/"):
+            target = (self.root / raw.lstrip("/")).resolve()
+        else:
+            target = (self.cwd / raw).resolve()
         if target != self.root and self.root not in target.parents:
             raise ValueError(f"Path escapes workspace: {path}")
         return target
@@ -969,6 +1032,14 @@ def _image_content_type(suffix: str) -> str:
         ".webp": "image/webp",
         ".gif": "image/gif",
     }.get(suffix.lower(), "application/octet-stream")
+
+
+def _write_large_tool_output(output: str) -> str:
+    directory = Path("/tmp/pebble_shell_tool_outputs")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"bash_{int(time.time() * 1000)}.log"
+    path.write_text(output, encoding="utf-8", errors="replace")
+    return path.as_posix()
 
 
 def _parse_codex_patch(patch: str) -> list[dict[str, Any]]:
@@ -1063,13 +1134,13 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "background_task_start",
-                    "description": "Start a write-capable background worker for long implementation, testing, research, or debugging work. The worker gets its own background_jobs/{job_id}/ folder and must self-check before completion.",
+                    "description": "Start a write-capable background worker for long implementation, testing, research, or debugging work. The folder is required; leading / means /workspace and missing folders are created.",
                 "parameters": {
                     "type": "object",
-                    "required": ["prompt"],
+                    "required": ["prompt", "folder"],
                     "properties": {
                         "prompt": {"type": "string"},
-                        "title": {"type": "string"},
+                        "folder": {"type": "string"},
                     },
                 },
             },
@@ -1147,6 +1218,18 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "background_task_pause",
+                "description": "Request that one background worker pause after its current model/tool step finishes.",
+                "parameters": {
+                    "type": "object",
+                    "required": ["job_id"],
+                    "properties": {"job_id": {"type": "string"}},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "background_task_message",
                 "description": "Send a new foreground instruction to a running, blocked, or needs-attention background worker. Paused workers resume with the same stored context and continue the original task.",
                 "parameters": {
@@ -1181,7 +1264,7 @@ def _send_file_tool_definition() -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": "send_file_to_user",
+            "name": "send_file",
             "description": "Send a workspace file to the user. Use after creating artifacts such as PDFs, reports, images, or archives.",
             "parameters": {
                 "type": "object",

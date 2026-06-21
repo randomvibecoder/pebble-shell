@@ -15,7 +15,7 @@ class ExaSearchClient:
 
     def search(self, query: str, num_results: int = 5) -> dict[str, Any]:
         if not self.api_key:
-            raise ValueError("EXA_API_KEY is required for exa_search")
+            raise ValueError("EXA_API_KEY is required for websearch")
         query = query.strip()
         if not query:
             raise ValueError("Exa query cannot be empty")

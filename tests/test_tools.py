@@ -10,7 +10,7 @@ from pebble_shell.tools import WorkspaceTools
 def test_workspace_paths_cannot_escape(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
 
-    result = tools.read_file("../outside")
+    result = tools.read("../outside")
 
     assert not result.ok
     assert "escapes workspace" in result.output
@@ -19,37 +19,62 @@ def test_workspace_paths_cannot_escape(tmp_path: Path) -> None:
 def test_write_read_and_list_file(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
 
-    written = tools.write_file("notes/todo.txt", "hello")
-    listed = tools.list_files("notes")
-    read = tools.read_file("notes/todo.txt")
+    written = tools.write("notes/todo.txt", "hello")
+    listed = tools.ls("notes")
+    read = tools.read("notes/todo.txt")
 
     assert written.ok
     assert listed.output == "notes/todo.txt"
     assert read.output == "hello"
 
 
-def test_edit_file_replaces_exact_text(tmp_path: Path) -> None:
+def test_ls_glob_grep_and_worker_cwd(tmp_path: Path) -> None:
+    worker = tmp_path / "project"
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, cwd=worker)
+
+    assert tools.run("write", {"path": "src/app.py", "content": "print('needle')\n"}).ok
+    assert (worker / "src" / "app.py").is_file()
+    assert tools.run("bash", {"command": "pwd"}).output.strip() == worker.as_posix()
+    assert tools.run("ls", {"path": "src"}).output == "project/src/app.py"
+    assert tools.run("glob", {"pattern": "**/*.py"}).output == "project/src/app.py"
+    assert "needle" in tools.run("grep", {"pattern": "needle"}).output
+    assert tools.run("read", {"path": "/project/src/app.py"}).output == "print('needle')\n"
+
+
+def test_old_model_tool_names_are_not_accepted(tmp_path: Path) -> None:
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+
+    assert not tools.run("read_file", {"path": "x"}).ok
+    assert not tools.run("write_file", {"path": "x", "content": "x"}).ok
+    assert not tools.run("edit_file", {"path": "x", "old": "x", "new": "y"}).ok
+    assert not tools.run("apply_patch", {"patch": "*** Begin Patch\n*** End Patch"}).ok
+    assert not tools.run("inspect_image", {"path": "x.png"}).ok
+    assert not tools.run("browser_visit", {"url": "https://example.com"}).ok
+    assert not tools.run("exa_search", {"query": "test"}).ok
+
+
+def test_edit_replaces_exact_text(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     (tmp_path / "notes.txt").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
 
-    result = tools.run("edit_file", {"path": "notes.txt", "old": "beta", "new": "BETA"})
+    result = tools.run("edit", {"path": "notes.txt", "old": "beta", "new": "BETA"})
 
     assert result.ok
     assert "1 replacement" in result.output
     assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == "alpha\nBETA\ngamma\n"
 
 
-def test_edit_file_rejects_ambiguous_replacement(tmp_path: Path) -> None:
+def test_edit_rejects_ambiguous_replacement(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     (tmp_path / "notes.txt").write_text("same\nsame\n", encoding="utf-8")
 
-    result = tools.run("edit_file", {"path": "notes.txt", "old": "same", "new": "new"})
+    result = tools.run("edit", {"path": "notes.txt", "old": "same", "new": "new"})
 
     assert not result.ok
     assert "occurs 2 times" in result.output
 
 
-def test_apply_patch_add_update_delete_files(tmp_path: Path) -> None:
+def test_patch_add_update_delete_files(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     (tmp_path / "notes.txt").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     (tmp_path / "old.txt").write_text("delete me\n", encoding="utf-8")
@@ -66,7 +91,7 @@ def test_apply_patch_add_update_delete_files(tmp_path: Path) -> None:
 *** Delete File: old.txt
 *** End Patch
 """
-    result = tools.run("apply_patch", {"patch": patch})
+    result = tools.run("patch", {"patch": patch})
 
     assert result.ok
     assert "added added.txt" in result.output
@@ -77,7 +102,7 @@ def test_apply_patch_add_update_delete_files(tmp_path: Path) -> None:
     assert not (tmp_path / "old.txt").exists()
 
 
-def test_apply_patch_rejects_non_matching_hunk(tmp_path: Path) -> None:
+def test_patch_rejects_non_matching_hunk(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     (tmp_path / "notes.txt").write_text("alpha\n", encoding="utf-8")
 
@@ -88,7 +113,7 @@ def test_apply_patch_rejects_non_matching_hunk(tmp_path: Path) -> None:
 +new
 *** End Patch
 """
-    result = tools.run("apply_patch", {"patch": patch})
+    result = tools.run("patch", {"patch": patch})
 
     assert not result.ok
     assert "did not match" in result.output
@@ -99,8 +124,8 @@ def test_file_edit_tools_are_exposed(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     names = {definition["function"]["name"] for definition in tools.definitions()}
 
-    assert "edit_file" in names
-    assert "apply_patch" in names
+    assert "edit" in names
+    assert "patch" in names
 
 
 def test_send_msg_is_foreground_only_tool_definition(tmp_path: Path) -> None:
@@ -126,25 +151,25 @@ def test_model_tools_do_not_expose_route_parameters(tmp_path: Path) -> None:
     assert "channel_id" not in cron_schema["properties"]
 
 
-def test_read_file_rejects_binary_files_before_model_context(tmp_path: Path) -> None:
+def test_read_rejects_binary_files_before_model_context(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     (tmp_path / "paper.pdf").write_bytes(b"%PDF-1.7\n" + b"x" * 1000)
 
-    result = tools.read_file("paper.pdf")
+    result = tools.read("paper.pdf")
 
     assert result.ok is False
     assert "Refusing to read likely binary file" in result.output
 
 
-def test_read_file_truncates_large_text_files(tmp_path: Path) -> None:
+def test_read_truncates_large_text_files(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     (tmp_path / "large.txt").write_text("a" * 250_000, encoding="utf-8")
 
-    result = tools.read_file("large.txt")
+    result = tools.read("large.txt")
 
     assert result.ok is True
     assert len(result.output) < 50_000
-    assert "read_file truncated" in result.output
+    assert "read truncated" in result.output
     assert "Use targeted shell commands" in result.output
     assert "sed, rg, head, tail" in result.output
 
@@ -176,7 +201,7 @@ def test_publish_static_site_rejects_hidden_source(tmp_path: Path) -> None:
     assert "hidden" in result.output
 
 
-def test_send_file_to_user_uses_configured_file_sender(tmp_path: Path) -> None:
+def test_send_file_uses_configured_file_sender(tmp_path: Path) -> None:
     sent = []
 
     def sender(path: Path) -> str:
@@ -185,39 +210,39 @@ def test_send_file_to_user_uses_configured_file_sender(tmp_path: Path) -> None:
 
     (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, file_sender=sender)
-    result = tools.run("send_file_to_user", {"path": "report.pdf"})
+    result = tools.run("send_file", {"path": "report.pdf"})
 
     assert result.ok
     assert result.output == "sent report.pdf"
     assert sent == ["report.pdf"]
 
 
-def test_send_file_to_user_without_sender_reports_ready_path(tmp_path: Path) -> None:
+def test_send_file_without_sender_reports_ready_path(tmp_path: Path) -> None:
     (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
-    result = tools.run("send_file_to_user", {"path": "report.pdf"})
+    result = tools.run("send_file", {"path": "report.pdf"})
 
     assert result.ok
     assert "File ready at report.pdf" in result.output
 
 
-def test_send_file_to_user_reports_discord_sender_failure_with_path(tmp_path: Path) -> None:
+def test_send_file_reports_discord_sender_failure_with_path(tmp_path: Path) -> None:
     def sender(path: Path) -> str:
         raise RuntimeError("discord gateway unavailable")
 
     (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, file_sender=sender)
-    result = tools.run("send_file_to_user", {"path": "report.pdf"})
+    result = tools.run("send_file", {"path": "report.pdf"})
 
     assert not result.ok
     assert "File send failed for report.pdf" in result.output
     assert "discord gateway unavailable" in result.output
 
 
-def test_send_file_to_user_rejects_oversized_file(tmp_path: Path) -> None:
+def test_send_file_rejects_oversized_file(tmp_path: Path) -> None:
     (tmp_path / "large.pdf").write_bytes(b"x" * 11)
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, max_send_file_bytes=10)
-    result = tools.run("send_file_to_user", {"path": "large.pdf"})
+    result = tools.run("send_file", {"path": "large.pdf"})
 
     assert not result.ok
     assert "exceeds 10 bytes" in result.output
@@ -250,6 +275,20 @@ def test_send_msg_validates_length(tmp_path: Path) -> None:
     assert "500 characters" in long_result.output
 
 
+def test_bash_truncates_large_output_to_tmp_file(tmp_path: Path) -> None:
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=5)
+
+    result = tools.run("bash", {"command": "python - <<'PY'\nprint('x' * 60000)\nPY"})
+
+    assert result.ok
+    assert len(result.output) < 52_000
+    assert "bash output truncated" in result.output
+    marker = "Full stdout/stderr saved at "
+    saved = result.output.split(marker, 1)[1].split(";", 1)[0]
+    assert saved.startswith("/tmp/pebble_shell_tool_outputs/")
+    assert Path(saved).read_text(encoding="utf-8").startswith("x" * 100)
+
+
 def test_public_sites_list_reports_published_sites(tmp_path: Path) -> None:
     source = tmp_path / "site"
     source.mkdir()
@@ -267,7 +306,7 @@ def test_public_sites_list_reports_published_sites(tmp_path: Path) -> None:
 def test_shell_runs_inside_workspace(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=2)
 
-    result = tools.shell("pwd")
+    result = tools.bash("pwd")
 
     assert result.ok
     assert result.output.strip() == str(tmp_path)
@@ -321,7 +360,7 @@ def test_background_process_start_allows_container_commands(tmp_path: Path) -> N
         tools.run("process_stop", {"name": "container-command"})
 
 
-def test_exa_search_uses_api_key_and_limits_results(tmp_path: Path, monkeypatch) -> None:
+def test_websearch_uses_api_key_and_limits_results(tmp_path: Path, monkeypatch) -> None:
     captured = {}
 
     class FakeResponse:
@@ -344,7 +383,7 @@ def test_exa_search_uses_api_key_and_limits_results(tmp_path: Path, monkeypatch)
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, exa_api_key="test-exa-key")
 
-    result = tools.run("exa_search", {"query": "OpenClaw heartbeat", "num_results": 99})
+    result = tools.run("websearch", {"query": "OpenClaw heartbeat", "num_results": 99})
 
     assert result.ok
     assert captured["url"] == "https://api.exa.ai/search"
@@ -355,10 +394,10 @@ def test_exa_search_uses_api_key_and_limits_results(tmp_path: Path, monkeypatch)
     assert json.loads(result.output)["results"][0]["title"] == "Example"
 
 
-def test_exa_search_requires_api_key(tmp_path: Path) -> None:
+def test_websearch_requires_api_key(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
 
-    result = tools.run("exa_search", {"query": "OpenClaw heartbeat"})
+    result = tools.run("websearch", {"query": "OpenClaw heartbeat"})
 
     assert not result.ok
     assert "EXA_API_KEY" in result.output

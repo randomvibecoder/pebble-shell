@@ -24,8 +24,9 @@ class ManagedProcess:
 
 
 class BackgroundProcessManager:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, cwd: Path | None = None) -> None:
         self.root = root
+        self.cwd = (cwd or root).resolve()
         self.processes: dict[str, ManagedProcess] = {}
         self.state_dir = self.root / ".pebble_shell" / "processes"
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -43,7 +44,7 @@ class BackgroundProcessManager:
         log_file = log_path.open("ab")
         process = subprocess.Popen(
             command,
-            cwd=self.root,
+            cwd=self.cwd,
             shell=True,
             stdin=subprocess.DEVNULL,
             stdout=log_file,

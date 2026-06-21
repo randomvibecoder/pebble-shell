@@ -60,7 +60,7 @@ def save_discord_attachments(
             relative = path.relative_to(workspace).as_posix()
             lines.append(
                 f"[attached image file: {relative}; already included as an image in this message, "
-                "so do not call inspect_image or read_file for this image unless the user asks about the saved file later]"
+                "so do not call read_image or read for this image unless the user asks about the saved file later]"
             )
             try:
                 images.append(image_input_from_bytes(data, relative, content_type, filename, max_bytes))

@@ -144,7 +144,7 @@ async def test_background_worker_persists_summary_and_notifies_after_context_err
     (agent.settings.agent_workspace / job.folder).mkdir(parents=True)
     agent.client = FakeClient(
         [
-            FakeResponse(ToolMessage("write_file", {"path": f"{job.folder}/index.html", "content": "<body>blue</body>"})),
+            FakeResponse(ToolMessage("write", {"path": "index.html", "content": "<body>blue</body>"})),
             RuntimeError("maximum context length exceeded"),
             FakeResponse(FinalMessage("Detailed summary of the compacted background job, files, commands, and tool result.")),
             FakeResponse(FinalMessage("Background job done after compaction.")),

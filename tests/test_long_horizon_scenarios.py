@@ -62,8 +62,8 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
     assert tools.set_runtime_config("heartbeat_every_seconds", "3600").ok
     assert tools.webhook_hook_save("email-alert", "Triage the incoming email payload.").ok
     assert tools.cron_job_save("daily-check", "Review outstanding state.", 86_400).ok
-    assert tools.write_file("context/MEMORY.md", "The recovery owner is platform-oncall.").ok
-    assert "platform-oncall" in tools.read_file("context/MEMORY.md").output
+    assert tools.write("context/MEMORY.md", "The recovery owner is platform-oncall.").ok
+    assert "platform-oncall" in tools.read("context/MEMORY.md").output
 
     with sqlite3.connect(tmp_path / "cron.sqlite3") as conn:
         conn.execute("update cron_jobs set next_run_at = ?", (0,))

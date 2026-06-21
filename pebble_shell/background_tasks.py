@@ -17,10 +17,10 @@ if TYPE_CHECKING:
     from .agent import CodingAgent
 
 
-ACTIVE_STATUSES = ("queued", "running", "cancelling")
-PAUSED_STATUSES = ("blocked", "needs_attention")
-TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted")
-MESSAGEABLE_STATUSES = (*ACTIVE_STATUSES, *PAUSED_STATUSES)
+ACTIVE_STATUSES = ("running", "pausing", "cancelling")
+PAUSED_STATUSES = ("paused", "blocked")
+TERMINAL_STATUSES = ("completed", "canceled")
+MESSAGEABLE_STATUSES = ("running", "pausing", "paused", "blocked")
 JOB_SELECT_COLUMNS = """
     id, title, prompt, folder, status, steps, result, error,
     created_at, updated_at, started_at, finished_at, model_calls, prompt_tokens,
@@ -76,11 +76,11 @@ class BackgroundTaskStore:
                 """
                 insert into background_jobs(id, title, prompt, folder, status, steps, result, error,
                                             created_at, updated_at)
-                values (?, ?, ?, ?, 'queued', 0, '', '', ?, ?)
+                values (?, ?, ?, ?, 'running', 0, '', '', ?, ?)
                 """,
                 (job_id, title.strip() or prompt.strip()[:80] or job_id, prompt.strip(), folder, now, now),
             )
-        self.add_event(job_id, "queued", "Background task queued.")
+        self.add_event(job_id, "running", "Background worker created and scheduled.")
         job = self.get_job(job_id)
         if not job:
             raise RuntimeError(f"Failed to create background job {job_id}")
@@ -93,7 +93,7 @@ class BackgroundTaskStore:
                 """
                 update background_jobs
                 set status = 'running', started_at = coalesce(started_at, ?), updated_at = ?
-                where id = ? and status = 'queued'
+                where id = ? and status = 'running'
                 """,
                 (now, now, job_id),
             )
@@ -107,13 +107,9 @@ class BackgroundTaskStore:
         self._finish(job_id, "blocked", result=result, error="", steps=steps, attention_summary=summary)
         self.add_event(job_id, "blocked", (summary or result)[:4000])
 
-    def mark_needs_attention(self, job_id: str, result: str, steps: int, summary: str = "") -> None:
-        self._finish(job_id, "needs_attention", result=result, error="", steps=steps, attention_summary=summary)
-        self.add_event(job_id, "needs_attention", (summary or result)[:4000])
-
     def fail_job(self, job_id: str, error: str, steps: int = 0) -> None:
-        self._finish(job_id, "failed", result="", error=error, steps=steps)
-        self.add_event(job_id, "failed", error[:4000])
+        self._finish(job_id, "blocked", result="", error=error, steps=steps, attention_summary=error[:1000])
+        self.add_event(job_id, "blocked", error[:4000])
 
     def cancel_job(self, job_id: str) -> None:
         job = self.get_job(job_id)
@@ -129,9 +125,24 @@ class BackgroundTaskStore:
             )
         self.add_event(job_id, "cancelling", "Cancellation requested.")
 
+    def pause_job(self, job_id: str) -> None:
+        job = self.get_job(job_id)
+        if not job:
+            raise ValueError(f"Unknown background job: {job_id}")
+        if job.status in TERMINAL_STATUSES:
+            return
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute("update background_jobs set status = 'pausing', updated_at = ? where id = ?", (now, job_id))
+        self.add_event(job_id, "pausing", "Pause requested.")
+
+    def mark_paused(self, job_id: str, steps: int) -> None:
+        self._finish(job_id, "paused", result="", error="", steps=steps)
+        self.add_event(job_id, "paused", "Background worker paused.")
+
     def mark_cancelled(self, job_id: str, steps: int) -> None:
-        self._finish(job_id, "cancelled", result="", error="", steps=steps)
-        self.add_event(job_id, "cancelled", "Background worker cancelled.")
+        self._finish(job_id, "canceled", result="", error="", steps=steps)
+        self.add_event(job_id, "canceled", "Background worker canceled.")
 
     def interrupt_running_jobs(self) -> None:
         now = time.time()
@@ -141,13 +152,13 @@ class BackgroundTaskStore:
                 ACTIVE_STATUSES,
             ).fetchall()
             conn.execute(
-                f"update background_jobs set status = 'interrupted', finished_at = ?, updated_at = ?, "
+                f"update background_jobs set status = 'blocked', finished_at = ?, updated_at = ?, "
                 f"error = 'Service restarted before this background task completed.' "
                 f"where status in ({','.join('?' for _ in ACTIVE_STATUSES)})",
                 (now, now, *ACTIVE_STATUSES),
             )
         for row in rows:
-            self.add_event(row[0], "interrupted", "Service restarted before this background task completed.")
+            self.add_event(row[0], "blocked", "Service restarted before this background task completed.")
 
     def get_job(self, job_id: str) -> BackgroundJob | None:
         with self._connect() as conn:
@@ -232,7 +243,7 @@ class BackgroundTaskStore:
                 conn.execute(
                     """
                     update background_jobs
-                    set status = 'queued', finished_at = null, self_check_retries = 0, attention_summary = '', updated_at = ?
+                    set status = 'running', finished_at = null, self_check_retries = 0, attention_summary = '', updated_at = ?
                     where id = ?
                     """,
                     (time.time(), job_id),
@@ -289,6 +300,10 @@ class BackgroundTaskStore:
     def should_cancel(self, job_id: str) -> bool:
         job = self.get_job(job_id)
         return bool(job and job.status == "cancelling")
+
+    def should_pause(self, job_id: str) -> bool:
+        job = self.get_job(job_id)
+        return bool(job and job.status == "pausing")
 
     def increment_self_check_retries(self, job_id: str) -> int:
         now = time.time()
@@ -439,23 +454,31 @@ class BackgroundTaskService:
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
 
-    def start(self, prompt: str, title: str | None) -> ToolResult:
+    def start(self, prompt: str, folder: str) -> ToolResult:
         prompt = prompt.strip()
         if not prompt:
             return ToolResult(ok=False, output="background task prompt cannot be empty")
+        try:
+            folder = _normalize_workspace_folder(folder)
+        except ValueError as exc:
+            return ToolResult(ok=False, output=str(exc))
         if self.store.count_active() >= self.max_active:
             return ToolResult(ok=False, output=f"Maximum active background tasks reached: {self.max_active}")
         loop = self._loop
         if loop is None or loop.is_closed():
             return ToolResult(ok=False, output="Background task runner is not attached to a running event loop")
-        folder = "background_jobs/pending"
-        job = self.store.create_job(prompt, title or "", folder)
-        folder = f"background_jobs/{job.id}"
+        title = prompt[:80]
+        job = self.store.create_job(prompt, title, folder)
         (self.agent.settings.agent_workspace / folder).mkdir(parents=True, exist_ok=True)
-        with self.store._connect() as conn:
-            conn.execute("update background_jobs set folder = ?, updated_at = ? where id = ?", (folder, time.time(), job.id))
         self._schedule_job(job.id)
+        self._notify_created(job.id, folder, prompt)
         return ToolResult(ok=True, output=json.dumps(self.status(job.id), sort_keys=True))
+
+    def _notify_created(self, job_id: str, folder: str, prompt: str) -> None:
+        if not self.agent._deliver or not self._loop or self._loop.is_closed():
+            return
+        excerpt = prompt.replace("\n", " ")[:100]
+        self._loop.create_task(self.agent._deliver(f"[background agent created] id={job_id} folder=/{folder} prompt={excerpt}"))
 
     def status(self, job_id: str) -> dict[str, Any]:
         job = self.store.get_job(job_id)
@@ -510,10 +533,14 @@ class BackgroundTaskService:
         self.store.cancel_job(job_id)
         return ToolResult(ok=True, output=json.dumps(self.status(job_id), sort_keys=True))
 
+    def pause_tool(self, job_id: str) -> ToolResult:
+        self.store.pause_job(job_id)
+        return ToolResult(ok=True, output=json.dumps(self.status(job_id), sort_keys=True))
+
     def message_tool(self, job_id: str, message: str) -> ToolResult:
         self.store.enqueue_message(job_id, message)
         job = self.store.get_job(job_id)
-        if job and job.status == "queued":
+        if job and job.status == "running":
             self._schedule_job(job_id)
         return ToolResult(ok=True, output=f"Queued message for background job {job_id}")
 
@@ -657,7 +684,11 @@ class BackgroundTaskService:
                 steps += response.steps
                 if self.store.should_cancel(job_id):
                     self.store.mark_cancelled(job_id, steps)
-                    await self._wake_foreground(job_id, "cancelled")
+                    await self._wake_foreground(job_id, "canceled")
+                    return
+                if self.store.should_pause(job_id):
+                    self.store.mark_paused(job_id, steps)
+                    await self._wake_foreground(job_id, "paused")
                     return
                 decision = await self._self_check(job_id, response.content)
                 if decision == "COMPLETE":
@@ -673,8 +704,8 @@ class BackgroundTaskService:
                 self.store.add_event(job_id, "self_check_needs_more_work", f"Retry {retries}/{MAX_SELF_CHECK_RETRIES}")
                 if retries >= MAX_SELF_CHECK_RETRIES:
                     summary = await self.summarize_attention(job_id)
-                    self.store.mark_needs_attention(job_id, response.content, steps, summary)
-                    await self._wake_foreground(job_id, "needs_attention")
+                    self.store.block_job(job_id, response.content, steps, summary)
+                    await self._wake_foreground(job_id, "blocked")
                     return
                 self.store.enqueue_message(job_id, NEEDS_MORE_WORK_PROMPT)
                 job = self.store.get_job(job_id)
@@ -682,11 +713,11 @@ class BackgroundTaskService:
                     raise ValueError(f"Unknown background job: {job_id}")
         except asyncio.CancelledError:
             self.store.mark_cancelled(job_id, steps)
-            await self._wake_foreground(job_id, "cancelled")
+            await self._wake_foreground(job_id, "canceled")
             raise
         except Exception as exc:  # noqa: BLE001 - background failures should be captured in job state.
             self.store.fail_job(job_id, str(exc), steps)
-            await self._wake_foreground(job_id, "failed")
+            await self._wake_foreground(job_id, "blocked")
         finally:
             self._tasks.pop(job_id, None)
 
@@ -712,7 +743,9 @@ class BackgroundTaskService:
         job = self.store.get_job(job_id)
         if not job:
             return
+        prefix = f"[background agent {event}] id={job.id} folder=/{job.folder}"
         prompt = (
+            f"{prefix}\n\n"
             f"Background task `{job.id}` emitted `{event}`.\n\n"
             f"Title: {job.title}\n"
             f"Status: {job.status}\n"
@@ -735,6 +768,16 @@ class BackgroundTaskService:
 def _new_job_id() -> str:
     day = datetime.now(timezone.utc).strftime("%Y%m%d")
     return f"bg_{day}_{secrets.token_hex(3)}"
+
+
+def _normalize_workspace_folder(folder: str) -> str:
+    raw = folder.strip()
+    if not raw:
+        raise ValueError("background task folder cannot be empty")
+    normalized = Path(raw.lstrip("/"))
+    if normalized.is_absolute() or any(part in {"", ".", ".."} for part in normalized.parts):
+        raise ValueError("background task folder must stay inside /workspace and cannot contain . or .. path segments")
+    return normalized.as_posix()
 
 
 def _row_to_job(row: sqlite3.Row) -> BackgroundJob:
@@ -891,7 +934,7 @@ def _display_status(job: BackgroundJob) -> str:
 
 def _job_flags(job: BackgroundJob, events: list[dict[str, Any]]) -> list[str]:
     flags = []
-    if job.steps <= 2 and job.status in {"completed", "blocked", "needs_attention"}:
+    if job.steps <= 2 and job.status in {"completed", "blocked"}:
         text = job.result.lower()
         if any(phrase in text for phrase in ("worker started", "running now", "i'll check", "i will check", "started.")):
             flags.append("early-complete")
@@ -910,7 +953,7 @@ def _fallback_recent_activity(job: BackgroundJob, events: list[dict[str, Any]]) 
         done = _single_line(job.result[:120])
     else:
         for event in events:
-            if event["kind"] in {"completed", "tool_call", "self_check", "blocked", "needs_attention", "failed"}:
+            if event["kind"] in {"completed", "tool_call", "self_check", "blocked", "paused", "canceled"}:
                 done = f"{event['kind']}: {_single_line(event['message'])[:100]}"
                 break
 
@@ -924,7 +967,7 @@ def _fallback_recent_activity(job: BackgroundJob, events: list[dict[str, Any]]) 
 
 
 def _fallback_attention_summary(job: BackgroundJob, events: list[dict[str, Any]]) -> str:
-    latest = next((event for event in events if event["kind"] not in {"started", "queued"}), None)
+    latest = next((event for event in events if event["kind"] not in {"started", "running"}), None)
     latest_text = "no recent diagnostic event"
     if latest:
         latest_text = f"{latest['kind']}: {_single_line(latest['message'])[:500]}"

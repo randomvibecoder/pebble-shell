@@ -186,7 +186,7 @@ def test_dump_next_heartbeat_context_writes_messages_jsonl(tmp_path: Path) -> No
     assert {"role": "user", "content": "hello"} in messages
     assert {"role": "assistant", "content": "hi"} in messages
     assert messages[-1]["role"] == "user"
-    assert "read_file" in messages[-1]["content"]
+    assert "read" in messages[-1]["content"]
     assert "context/HEARTBEAT.md" in messages[-1]["content"]
     assert "SECRET HEARTBEAT BODY" not in str(messages)
 
@@ -198,7 +198,7 @@ def test_heartbeat_prompt_includes_current_utc_time(tmp_path: Path) -> None:
 
     assert re.match(
         r"^This is a heartbeat turn\. The time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\. "
-        r"First call read_file with path context/HEARTBEAT\.md\.",
+        r"First call read with path context/HEARTBEAT\.md\.",
         prompt,
     )
 
@@ -207,7 +207,7 @@ def test_system_prompt_defines_heartbeat() -> None:
     assert "A heartbeat is an automatic periodic internal turn started by the harness" in SYSTEM_PROMPT
     assert "not a direct user message" in SYSTEM_PROMPT
     assert "The time is YYYY-MM-DD HH:MM:SS UTC" in SYSTEM_PROMPT
-    assert "first call read_file with path context/HEARTBEAT.md" in SYSTEM_PROMPT
+    assert "first call read with path context/HEARTBEAT.md" in SYSTEM_PROMPT
     assert "HEARTBEAT_OK means there is no user-visible update" in SYSTEM_PROMPT
     assert "The harness suppresses HEARTBEAT_OK" in SYSTEM_PROMPT
 
@@ -458,13 +458,13 @@ async def test_empty_final_recovery_falls_back_to_visible_message(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_forces_read_file_before_final_answer(tmp_path: Path) -> None:
+async def test_heartbeat_forces_read_before_final_answer(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     (agent.settings.agent_workspace / "context" / "HEARTBEAT.md").write_text("Check the dashboard.", encoding="utf-8")
     fake_client = SequencedClient()
     fake_client.chat.completions.responses = [
         _final_response("HEARTBEAT_OK"),
-        _tool_call_response_named("read_file", {"path": "context/HEARTBEAT.md"}),
+        _tool_call_response_named("read", {"path": "context/HEARTBEAT.md"}),
         _final_response("HEARTBEAT_OK"),
     ]
     agent.client = fake_client  # type: ignore[assignment]
@@ -476,7 +476,7 @@ async def test_heartbeat_forces_read_file_before_final_answer(tmp_path: Path) ->
     calls = fake_client.chat.completions.calls
     assert len(calls) == 3
     assert any(
-        message["role"] == "system" and "must inspect context/HEARTBEAT.md through the read_file tool" in message["content"]
+        message["role"] == "system" and "must inspect context/HEARTBEAT.md through the read tool" in message["content"]
         for message in calls[1]["messages"]
     )
     assert any(

@@ -7,7 +7,7 @@ from pebble_shell.tools import WorkspaceTools
 def test_shell_command_runs_inside_workspace(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1)
 
-    result = tools.shell("echo ok")
+    result = tools.bash("echo ok")
 
     assert result.ok
     assert result.output.strip() == "ok"
@@ -17,7 +17,7 @@ def test_shell_audits_allowed_command(tmp_path: Path) -> None:
     audit = ShellAuditStore(tmp_path / "audit.sqlite3")
     tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, shell_audit=audit)
 
-    result = tools.shell("echo ok")
+    result = tools.bash("echo ok")
 
     assert result.ok
     records = audit.recent()
@@ -31,7 +31,7 @@ def test_workspace_removal_command_runs_without_runtime_toggle(tmp_path: Path) -
     (workspace / "build").mkdir(parents=True)
     tools = WorkspaceTools(workspace, shell_timeout_seconds=1, shell_audit=audit)
 
-    result = tools.shell("rm -rf build")
+    result = tools.bash("rm -rf build")
 
     assert result.ok
     assert not (workspace / "build").exists()

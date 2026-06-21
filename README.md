@@ -76,11 +76,11 @@ Discord client credentials can register application commands, but sending DMs re
 
 See [.env.example](.env.example). Keep real keys out of source control.
 
-`OPENAI_MODEL` is used for normal text turns, Discord image attachments, and `inspect_image`. Set `OPENAI_FALLBACK_MODELS` to a comma-separated list to try alternates if the primary model/provider call fails.
+`OPENAI_MODEL` is used for normal text turns, Discord image attachments, and `read_image`. Set `OPENAI_FALLBACK_MODELS` to a comma-separated list to try alternates if the primary model/provider call fails.
 
-Set `EXA_API_KEY` to enable the `exa_search` tool for external web research.
+Set `EXA_API_KEY` to enable the `websearch` tool for external web research.
 
-Set `DISCORD_ALLOWED_USER_ID` to the single Discord user ID Pebble Shell should accept. `MAX_DISCORD_ATTACHMENT_BYTES` limits incoming attachment downloads. `MAX_DISCORD_SEND_FILE_BYTES` limits files sent back to Discord with `send_file_to_user`.
+Set `DISCORD_ALLOWED_USER_ID` to the single Discord user ID Pebble Shell should accept. `MAX_DISCORD_ATTACHMENT_BYTES` limits incoming attachment downloads. `MAX_DISCORD_SEND_FILE_BYTES` limits files sent back to Discord with `send_file`.
 
 Set `API_AUTH_TOKEN` before exposing local/admin routes. When set, these endpoints require `Authorization: Bearer <token>`:
 
@@ -93,17 +93,17 @@ Set `API_AUTH_TOKEN` before exposing local/admin routes. When set, these endpoin
 
 ## Safety Model
 
-The agent process and shell tools run inside the Docker container. File and shell tools are rooted at `AGENT_WORKSPACE` (`/workspace` in Docker). Shell execution has a timeout and is allowed inside the container; Docker isolation is the primary safety boundary.
+The agent process and bash tools run inside the Docker container. File and bash tools are rooted at `AGENT_WORKSPACE` (`/workspace` in Docker). bash execution has a timeout and is allowed inside the container; Docker isolation is the primary safety boundary.
 
 ## V0.0.1 Runtime Model
 
 V0.0.1 uses one user-facing foreground supervisor plus up to four long-running background workers. Foreground requests still serialize through a process-wide async lock so conversation state stays coherent, but background workers run outside that foreground lock.
 
-The foreground can start workers with `background_task_start`, inspect the whole pool with `background_agents_status`, inspect raw details with `background_task_status`, `background_tasks_list`, and `background_task_events`, ask focused questions with `background_task_ask`, send new instructions to running/blocked/needs-attention workers with `background_task_message`, and request cooperative cancellation with `background_task_cancel`. Workers do not have heartbeat behavior and never message the user directly; they emit internal events that wake the foreground supervisor, which decides what to tell the user.
+The foreground can start workers with `background_task_start(prompt, folder)`, inspect the whole pool with `background_agents_status`, inspect raw details with `background_task_status`, `background_tasks_list`, and `background_task_events`, ask focused questions with `background_task_ask`, pause with `background_task_pause`, send new instructions to running/paused/blocked workers with `background_task_message`, and request cooperative cancellation with `background_task_cancel`. Workers do not have heartbeat behavior and never message the user directly; they emit internal events that wake the foreground supervisor, which decides what to tell the user.
 
-Workers self-check before completion by answering exactly `COMPLETE`, `BLOCKED`, or `NEEDS_MORE_WORK`. `NEEDS_MORE_WORK` keeps the worker running up to a bounded retry cap; `BLOCKED` and repeated incomplete checks keep the job inspectable and messageable for foreground follow-up. `OPENAI_FLASH_MODEL` powers cheap status summaries such as the `recent_activity` column in `background_agents_status`.
+Workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`. They self-check before completion by answering exactly `COMPLETE`, `BLOCKED`, or `NEEDS_MORE_WORK`. `NEEDS_MORE_WORK` keeps the worker running up to a bounded retry cap; `BLOCKED` and repeated incomplete checks keep the job inspectable and messageable for foreground follow-up. `OPENAI_FLASH_MODEL` powers cheap status summaries such as the `recent_activity` column in `background_agents_status`.
 
-Each worker gets a folder at `/workspace/background_jobs/{job_id}/` and is instructed to edit only that folder and `/tmp` unless the foreground prompt explicitly grants another path. This is prompt-policy isolation, not a hard filesystem sandbox. Docker Compose exposes ports `8080-8085` so several background workers can run webdev tests in parallel.
+Each worker is assigned a required folder. A folder like `/myproject` maps to `/workspace/myproject`; missing folders are created. Relative file/search/bash/process paths in a worker resolve from that assigned folder, while leading `/` in file tools means `/workspace`. This is prompt/tool-root isolation, not a hard filesystem sandbox. Docker Compose exposes ports `8080-8085` so several background workers can run webdev tests in parallel.
 
 ## Self-Improvement
 
@@ -121,7 +121,7 @@ Webhook triggers normally return the agent result. Browser forms can use `POST /
 
 For browser-testable pages, the agent can call `publish_static_site` to copy a workspace file or directory into `/workspace/public/{name}`. Published files are served by the app at `/public/{name}/...`.
 
-For downloadable artifacts, the agent can call `send_file_to_user` with a workspace-relative path. The active transport adapter sends the file back to the user, for example after compiling a PDF.
+For downloadable artifacts, the agent can call `send_file` with a workspace-relative path. The active transport adapter sends the file back to the user, for example after compiling a PDF.
 
 For dev servers and other long-running commands, use the background process tools: `process_start`, `processes_list`, `process_status`, `process_logs`, and `process_stop`. `GET /status` also reports active processes so a UI or Discord command can show what is still running.
 

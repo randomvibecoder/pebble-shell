@@ -103,22 +103,76 @@ async def test_background_task_tools_limit_active_workers_to_four(tmp_path: Path
     agent.run_background_task = hold_until_cancelled  # type: ignore[method-assign]
 
     started = [
-        agent.tools.run("background_task_start", {"prompt": f"build site {index}", "title": f"site {index}"})
+        agent.tools.run("background_task_start", {"prompt": f"build site {index}", "folder": f"/site-{index}"})
         for index in range(4)
     ]
-    fifth = agent.tools.run("background_task_start", {"prompt": "build one more", "title": "overflow"})
+    fifth = agent.tools.run("background_task_start", {"prompt": "build one more", "folder": "/overflow"})
 
     assert all(result.ok for result in started)
     assert not fifth.ok
     assert "Maximum active background tasks reached: 4" in fifth.output
     jobs = [json.loads(result.output) for result in started]
     assert len({job["id"] for job in jobs}) == 4
-    assert all(job["folder"] == f"background_jobs/{job['id']}" for job in jobs)
+    assert {job["folder"] for job in jobs} == {f"site-{index}" for index in range(4)}
     assert all("user_id" not in job and "channel_id" not in job for job in jobs)
 
     for job in jobs:
         agent.tools.run("background_task_cancel", {"job_id": job["id"]})
     await _wait_until(lambda: agent.background_store.count_active() == 0)
+
+
+@pytest.mark.asyncio
+async def test_background_task_start_sends_debug_notice_and_creates_folder(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    agent.bind_background_loop()
+    delivered: list[str] = []
+
+    async def deliver(text: str) -> None:
+        delivered.append(text)
+
+    async def hold_until_cancelled(job) -> AgentResponse:
+        while not agent.background_store.should_cancel(job.id):
+            await asyncio.sleep(0.01)
+        return AgentResponse(content="canceled", steps=1)
+
+    agent.set_deliver(deliver)
+    agent.run_background_task = hold_until_cancelled  # type: ignore[method-assign]
+
+    result = agent.tools.run("background_task_start", {"prompt": "build a dashboard with a lot of detail", "folder": "/dashboards/main"})
+
+    assert result.ok
+    job = json.loads(result.output)
+    assert job["folder"] == "dashboards/main"
+    assert (agent.settings.agent_workspace / "dashboards/main").is_dir()
+    await _wait_until(lambda: bool(delivered))
+    assert delivered[0].startswith(f"[background agent created] id={job['id']} folder=/dashboards/main prompt=build a dashboard")
+    agent.tools.run("background_task_cancel", {"job_id": job["id"]})
+    await _wait_until(lambda: agent.background_store.count_active() == 0)
+
+
+@pytest.mark.asyncio
+async def test_background_task_pause_stops_after_current_step_and_message_resumes(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    job = agent.background_store.create_job("pause me", "pause me", "background_jobs/test")
+
+    async def one_step(job) -> AgentResponse:
+        return AgentResponse(content="step finished", steps=1)
+
+    agent.run_background_task = one_step  # type: ignore[method-assign]
+    agent.background_store.pause_job(job.id)
+
+    await agent.background_tasks._run_job(job.id)
+
+    paused = agent.background_store.get_job(job.id)
+    assert paused is not None
+    assert paused.status == "paused"
+
+    result = agent.background_tasks.message_tool(job.id, "keep going")
+
+    assert result.ok
+    resumed = agent.background_store.get_job(job.id)
+    assert resumed is not None
+    assert resumed.status == "running"
 
 
 @pytest.mark.asyncio
@@ -135,7 +189,7 @@ async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_pat
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("Worker queued. Job ID: `bg_fake_123456`")),
-            FakeResponse(ToolMessage("background_task_start", {"prompt": "monitor the test sites", "title": "real monitor"})),
+            FakeResponse(ToolMessage("background_task_start", {"prompt": "monitor the test sites", "folder": "/real-monitor"})),
             FakeResponse(FinalMessage("Worker started with the real tool result.")),
         ]
     )  # type: ignore[assignment]
@@ -150,7 +204,7 @@ async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_pat
     assert "You have not called `background_task_start`" in calls[1]["messages"][-1]["content"]
     jobs = agent.background_store.list_jobs(limit=10)
     assert len(jobs) == 1
-    assert jobs[0]["title"] == "real monitor"
+    assert jobs[0]["folder"] == "real-monitor"
     assert jobs[0]["id"] != "bg_fake_123456"
 
     agent.tools.run("background_task_cancel", {"job_id": jobs[0]["id"]})
@@ -164,7 +218,7 @@ async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> No
     (agent.settings.agent_workspace / job.folder).mkdir(parents=True)
     agent.client = FakeClient(
         [
-            FakeResponse(ToolMessage("write_file", {"path": f"{job.folder}/index.html", "content": "<body>blue</body>"})),
+            FakeResponse(ToolMessage("write", {"path": "index.html", "content": "<body>blue</body>"})),
             FakeResponse(FinalMessage("Wrote the page.")),
         ]
     )  # type: ignore[assignment]
@@ -231,11 +285,11 @@ async def test_background_job_needs_attention_after_three_self_check_retries(tmp
 
     saved = agent.background_store.get_job(job.id)
     assert saved is not None
-    assert saved.status == "needs_attention"
+    assert saved.status == "blocked"
     assert saved.self_check_retries == 3
     assert "ran out of retries" in saved.attention_summary
     events = agent.background_store.list_events(job.id, limit=20)
-    assert any(event["kind"] == "needs_attention" for event in events)
+    assert any(event["kind"] == "blocked" for event in events)
 
 
 @pytest.mark.asyncio
@@ -262,7 +316,7 @@ async def test_background_job_needs_attention_survives_flash_summary_failure(tmp
 
     saved = agent.background_store.get_job(job.id)
     assert saved is not None
-    assert saved.status == "needs_attention"
+    assert saved.status == "blocked"
     assert "needs foreground attention" in saved.attention_summary
     assert "flash" not in saved.attention_summary.lower()
 
@@ -288,7 +342,7 @@ async def test_background_job_blocked_remains_messageable_and_resumes(tmp_path: 
     assert result.ok
     resumed = agent.background_store.get_job(job.id)
     assert resumed is not None
-    assert resumed.status == "queued"
+    assert resumed.status == "running"
     assert resumed.self_check_retries == 0
 
 
@@ -297,7 +351,7 @@ async def test_background_agents_status_table_uses_flash_activity(tmp_path: Path
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
-    agent.background_store.add_event(job.id, "tool_call", "write_file: ok")
+    agent.background_store.add_event(job.id, "tool_call", "write: ok")
     agent.background_store.record_model_usage(job.id, "claude-haiku-4-5-20251001", 100, 20, 120)
     agent.background_store.save_context(job.id, [{"role": "assistant", "content": "Wrote index.html."}])
     agent.client = FakeClient([FakeResponse(FinalMessage("Done: wrote index.html. Now: running browser check."))])  # type: ignore[assignment]
@@ -347,7 +401,7 @@ async def test_background_agents_status_table_falls_back_when_flash_fails(tmp_pa
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
-    agent.background_store.add_event(job.id, "tool_call", "write_file: ok")
+    agent.background_store.add_event(job.id, "tool_call", "write: ok")
     async def fail_flash(**kwargs):
         raise RuntimeError("flash unavailable")
 
@@ -356,7 +410,7 @@ async def test_background_agents_status_table_falls_back_when_flash_fails(tmp_pa
     status = await agent.background_tasks.status_table(limit=5)
 
     row = status["jobs"][0]
-    assert "tool_call: write_file: ok" in row["recent_activity"]
+    assert "tool_call: write: ok" in row["recent_activity"]
     assert "flash" not in row["recent_activity"].lower()
 
 
@@ -403,7 +457,7 @@ def test_background_store_marks_active_jobs_interrupted_on_restart(tmp_path: Pat
 
     restarted = _agent(tmp_path)
 
-    assert restarted.background_store.get_job(job.id).status == "interrupted"  # type: ignore[union-attr]
+    assert restarted.background_store.get_job(job.id).status == "blocked"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
@@ -418,10 +472,10 @@ async def test_end_to_end_onboarding_four_parallel_websites_and_midrun_question(
             FakeResponse(
                 ToolMessage(
                     "background_task_start",
-                    {
-                        "title": f"website {index + 1}",
-                        "prompt": f"Build website {index + 1} in your assigned folder and make the background color color-{index + 1}.",
-                    },
+                        {
+                            "prompt": f"Build website {index + 1} in your assigned folder and make the background color color-{index + 1}.",
+                            "folder": f"/website-{index + 1}",
+                        },
                 )
             )
         )

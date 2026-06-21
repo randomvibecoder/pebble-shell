@@ -34,7 +34,7 @@ def test_save_discord_attachments_saves_pdf_and_image(monkeypatch, tmp_path) -> 
     assert saved.lines[1].split("file: ", 1)[1].split(";", 1)[0].endswith("/cat.png")
     assert "/channel-1/" not in saved.lines[1]
     assert "/message-1/" not in saved.lines[1]
-    assert "do not call inspect_image or read_file" in saved.lines[1]
+    assert "do not call read_image or read" in saved.lines[1]
     assert (tmp_path / saved.lines[0].removeprefix("[attached file: ").removesuffix("]")).read_bytes() == b"%PDF-1.4"
     assert len(saved.images) == 1
     assert saved.images[0].filename == "cat.png"

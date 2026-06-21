@@ -39,21 +39,22 @@ Operating rules:
 - Pinned context files such as context/SOUL.md, context/AGENTS.md, context/USER.md, context/TOOLS.md, and context/MEMORY.md are cached into the prompt at startup and refreshed after context compaction. If you edit one of these files, the edit/tool result remains in exact context for the current run; the pinned snapshot updates after compaction or restart.
 
 Tool use:
-- Use file and shell tools for current workspace state, edits, command output, and verification.
-- For file edits, prefer edit_file for small exact replacements and apply_patch for larger or multi-file patches. Use write_file for new files or full rewrites.
-- The agent process runs as `agent` inside its Docker container and has passwordless `sudo` for container-local administration. Shell commands are allowed inside the container, including `sudo`; this is container privilege, not host root.
-- For background work: use background_task_start to start a worker; use background_agents_status first when you need a dashboard of all workers; use background_task_status/events for one worker's raw details; use background_task_ask for a focused question over one worker's context; use background_task_message to resume or redirect a running/blocked/needs-attention worker; use background_task_cancel to stop one.
-- Do not directly edit an active worker's background_jobs/{job_id}/ folder; ask or supervise that worker instead.
+- Use ls, glob, grep, read, write, edit, patch, and bash for current workspace state, edits, command output, and verification.
+- For file edits, prefer edit for small exact replacements and patch for larger or multi-file patches. Use write for new files or full rewrites.
+- The agent process runs as `agent` inside its Docker container and has passwordless `sudo` for container-local administration. bash commands are allowed inside the container, including `sudo`; this is container privilege, not host root.
+- For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
+- For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
+- For background work: use background_task_start(prompt, folder) to start a worker. The folder is required; `/name` means `/workspace/name`, and missing folders are created. Use background_agents_status first when you need a dashboard of all workers; use background_task_status/events for one worker's raw details; use background_task_ask for a focused question over one worker's context; use background_task_pause to pause after the current step; use background_task_message to resume or redirect a running/paused/blocked worker; use background_task_cancel to stop one.
+- Do not directly edit an active worker's assigned folder; ask or supervise that worker instead.
 - Use process_start/processes_list/process_status/process_logs/process_stop for long-running commands such as dev servers.
-- Use browser_visit for rendered page checks and JavaScript/browser behavior.
-- Use exa_search for current external research when EXA_API_KEY is configured.
+- Use websearch for current external research when EXA_API_KEY is configured.
 - Use publish_static_site for browser-testable static pages served from /public.
 - Use send_msg for brief progress updates during long foreground tasks. Keep each message short, ideally under 400 characters. Do not use send_msg for the final answer; the harness sends your final assistant response normally when the turn is done.
-- Use send_file_to_user after creating a user-requested downloadable artifact such as a PDF, report, image, or archive.
+- Use send_file after creating a user-requested downloadable artifact such as a PDF, report, image, or archive.
 - Use webhook_hook_save and webhook_events_list for event-backed workflows such as suggestion boxes or email hooks.
 - Use cron_job_save for specific recurring automations; use heartbeat for broad periodic awareness.
 - Use set_runtime_config for user-requested model or heartbeat interval changes.
-- Durable self-memory lives in context/MEMORY.md. Use read_file, edit_file, write_file, or apply_patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
+- Durable self-memory lives in context/MEMORY.md. Use read, edit, write, or patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
 
 Memory:
 - context/MEMORY.md is pinned into context as a cached snapshot. It refreshes at process startup and after context compaction, not after every edit.
@@ -62,8 +63,8 @@ Memory:
 
 Heartbeat:
 - A heartbeat is an automatic periodic internal turn started by the harness on the configured interval. It is for broad periodic awareness: checking lightweight ongoing state, open/background tasks, failed hooks, scheduled work, blockers, and small follow-up actions. It is not a direct user message and should not be treated as new user intent.
-- During a heartbeat, the newest message is a user-role harness message in this shape: "This is a heartbeat turn. The time is YYYY-MM-DD HH:MM:SS UTC. First call read_file with path context/HEARTBEAT.md. Follow context/HEARTBEAT.md strictly. Consider current state, outstanding tasks, blockers, and whether one safe bounded action is useful. If nothing needs attention, reply HEARTBEAT_OK."
-- On every heartbeat, first call read_file with path context/HEARTBEAT.md, then follow that file's instructions.
+- During a heartbeat, the newest message is a user-role harness message in this shape: "This is a heartbeat turn. The time is YYYY-MM-DD HH:MM:SS UTC. First call read with path context/HEARTBEAT.md. Follow context/HEARTBEAT.md strictly. Consider current state, outstanding tasks, blockers, and whether one safe bounded action is useful. If nothing needs attention, reply HEARTBEAT_OK."
+- On every heartbeat, first call read with path context/HEARTBEAT.md, then follow that file's instructions.
 - HEARTBEAT_OK means there is no user-visible update, no useful action to report, and no blocker requiring attention. The harness suppresses HEARTBEAT_OK so the user is not messaged on routine no-op heartbeats.
 - If attention is needed, do not reply HEARTBEAT_OK. Briefly report the issue, useful action taken, or next concrete action.
 
@@ -72,7 +73,7 @@ Chat behavior:
 - Be concise and natural. On first contact, briefly ask about the user's hobbies, interests, work style, and what they want remembered while still handling urgent concrete requests.
 - During onboarding, write important durable facts the user shares, such as name, stable preferences, hobbies, work style, and explicit memory requests, into context/MEMORY.md with file tools.
 - Image attachments may be provided as image_url parts in the user message. Inspect them directly when relevant and mention if no image was actually provided.
-- Attachments may also be saved under sent_attachments and listed in the user message. Non-image files appear as [attached file: path] and must be inspected with normal tools when relevant; do not assume PDFs or other non-image files were read automatically. Images appear as [attached image file: path; already included as an image in this message, ...] and may also be provided to the vision model in the same message; do not re-inspect those image paths with inspect_image/read_file unless the user asks about the saved file later.
+- Attachments may also be saved under sent_attachments and listed in the user message. Non-image files appear as [attached file: path] and must be inspected with normal tools when relevant; do not assume PDFs or other non-image files were read automatically. Images appear as [attached image file: path; already included as an image in this message, ...] and may also be provided to the vision model in the same message; do not re-inspect those image paths with read_image/read unless the user asks about the saved file later.
 """
 
 SUMMARY_PROMPT = """You are Pebble Shell's no-tools conversation and execution compactor.
@@ -126,11 +127,14 @@ BACKGROUND_SYSTEM_PROMPT = """You are a write-capable background worker controll
 
 Rules:
 - You are not the user-facing foreground agent. Do not try to message the user directly; report final status in your final answer.
-- You have no heartbeat. Work until the assigned task is complete, blocked, failed, or cancelled.
-- Edit only your assigned job folder and /tmp unless the foreground prompt explicitly grants another path.
+- You have no heartbeat. Work until the assigned task is complete, blocked, paused, or canceled.
+- Edit only your assigned folder and /tmp unless the foreground prompt explicitly grants another path.
+- All relative file, search, bash, and process tool paths operate from your assigned folder. For these tools, a leading / means /workspace, not container root.
+- For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
+- For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
 - Prefer job-id-specific names for background processes and artifacts.
 - Use tools to inspect, edit, run, test, and verify. Do not claim completion without tool evidence.
-- You are already running as a background worker. Do not use process_start/processes as a way to hand off the assigned job and then stop. Use shell/tool calls directly for the job. Use process_start only for real long-running servers, watchers, or daemons that must remain alive while you continue testing or report their status.
+- You are already running as a background worker. Do not use process_start/processes as a way to hand off the assigned job and then stop. Use bash/tool calls directly for the job. Use process_start only for real long-running servers, watchers, or daemons that must remain alive while you continue testing or report their status.
 - When you believe you are done, stop with a concise final answer. The harness will then ask you to self-check with exactly COMPLETE, BLOCKED, or NEEDS_MORE_WORK. Answer honestly from tool evidence. If unsure or not verified, answer NEEDS_MORE_WORK or BLOCKED rather than claiming completion.
 - Keep your final answer concise: summarize what you changed, where it is, how you tested it, and any blockers."""
 
@@ -321,6 +325,7 @@ class CodingAgent:
 
     async def run_background_task(self, job: BackgroundJob) -> AgentResponse:
         self.bind_background_loop()
+        worker_tools = self._background_worker_tools(job)
         existing_context = self.background_store.get_context(job.id)
         if existing_context:
             return await self._run_steps(
@@ -331,6 +336,7 @@ class CodingAgent:
                 False,
                 background_job_id=job.id,
                 include_background_tools=False,
+                tools=worker_tools,
             )
         memory_context = self.memory.get_context(
             job.prompt,
@@ -354,6 +360,8 @@ class CodingAgent:
                     f"Background job id: {job.id}\n"
                     f"Assigned folder: {job.folder}\n"
                     f"Absolute assigned folder: {self.settings.agent_workspace / job.folder}\n"
+                    "All relative file, search, bash, and process tool paths operate from the assigned folder. "
+                    "For these tools, a leading / means /workspace, not container root.\n"
                     f"Task:\n{job.prompt}"
                 ),
             },
@@ -367,6 +375,30 @@ class CodingAgent:
             False,
             background_job_id=job.id,
             include_background_tools=False,
+            tools=worker_tools,
+        )
+
+    def _background_worker_tools(self, job: BackgroundJob) -> WorkspaceTools:
+        return WorkspaceTools(
+            self.settings.agent_workspace,
+            self.settings.shell_timeout_seconds,
+            runtime_config=self.runtime_config,
+            self_improvement=self.self_improvement,
+            cron=self.cron,
+            shell_audit=self.shell_audit,
+            memory=self.memory,
+            exa_api_key=self.settings.exa_api_key,
+            exa_base_url=self.settings.exa_base_url,
+            background_tasks=None,
+            openai_api_key=self.settings.openai_api_key,
+            openai_base_url=self.settings.openai_base_url,
+            openai_model=self.settings.openai_model,
+            openai_fallback_models=self.settings.openai_fallback_models,
+            max_inspect_image_bytes=self.settings.max_discord_image_bytes,
+            file_sender=None,
+            text_sender=None,
+            max_send_file_bytes=self.settings.max_discord_send_file_bytes,
+            cwd=self.settings.agent_workspace / job.folder,
         )
 
     async def _run_steps(
@@ -379,12 +411,18 @@ class CodingAgent:
         background_job_id: str | None = None,
         include_background_tools: bool = True,
         memory_start_index: int | None = None,
+        tools: WorkspaceTools | None = None,
     ) -> AgentResponse:
+        active_tools = tools or self.tools
         called_tool_names: list[str] = []
         called_tool_records: list[tuple[str, str]] = []
         for step in range(1, self.settings.max_agent_steps + 1):
             if background_job_id and self.background_store.should_cancel(background_job_id):
-                final = "Background task cancelled before the next model step."
+                final = "Background task canceled before the next model step."
+                await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
+                return AgentResponse(content=final, steps=step - 1)
+            if background_job_id and self.background_store.should_pause(background_job_id):
+                final = "Background task paused before the next model step."
                 await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
                 return AgentResponse(content=final, steps=step - 1)
             if background_job_id:
@@ -415,7 +453,7 @@ class CodingAgent:
                 messages=messages,
                 background_job_id=background_job_id,
                 source=_log_source_kind(source),
-                tools=self.tools.definitions(include_background_tools=include_background_tools),
+                tools=active_tools.definitions(include_background_tools=include_background_tools),
                 tool_choice="auto",
             )
             message = response.choices[0].message
@@ -430,8 +468,8 @@ class CodingAgent:
                         {
                             "role": "system",
                             "content": (
-                                "This heartbeat turn must inspect context/HEARTBEAT.md through the read_file tool before finishing. "
-                                "Call read_file now with path \"context/HEARTBEAT.md\", then continue the heartbeat decision from that tool result."
+                                "This heartbeat turn must inspect context/HEARTBEAT.md through the read tool before finishing. "
+                                "Call read now with path \"context/HEARTBEAT.md\", then continue the heartbeat decision from that tool result."
                             ),
                         }
                     )
@@ -449,7 +487,7 @@ class CodingAgent:
                             "content": (
                                 "The user explicitly asked you to start a background worker. "
                                 "You have not called `background_task_start` in this turn. "
-                                "Call `background_task_start` now, then report only the real job id returned by the tool."
+                                "Call `background_task_start` now with a prompt and folder, then report only the real job id returned by the tool."
                             ),
                         }
                     )
@@ -517,10 +555,14 @@ class CodingAgent:
                 called_tool_names.append(call.function.name)
                 called_tool_records.append((call.function.name, call.function.arguments))
                 if background_job_id and self.background_store.should_cancel(background_job_id):
-                    final = "Background task cancelled before running the next tool."
+                    final = "Background task canceled before running the next tool."
                     await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
                     return AgentResponse(content=final, steps=step)
-                result = await asyncio.to_thread(self.tools.run, call.function.name, call.function.arguments)
+                if background_job_id and self.background_store.should_pause(background_job_id):
+                    final = "Background task paused before running the next tool."
+                    await self._remember_turn(user_memory_contents, final, messages, memory_start_index, background_job_id)
+                    return AgentResponse(content=final, steps=step)
+                result = await asyncio.to_thread(active_tools.run, call.function.name, call.function.arguments)
                 messages.append(
                     {
                         "role": "tool",
@@ -1096,7 +1138,7 @@ def _requires_background_task_start(user_memory_contents: list[str]) -> bool:
 
 def _called_read_heartbeat(called_tool_records: list[tuple[str, str]]) -> bool:
     for name, raw_arguments in called_tool_records:
-        if name != "read_file":
+        if name != "read":
             continue
         try:
             arguments = json.loads(raw_arguments or "{}")

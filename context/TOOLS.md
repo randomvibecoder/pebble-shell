@@ -1,27 +1,31 @@
 # TOOLS
 
-- `shell` runs inside the Docker container workspace.
+- `bash` runs inside the Docker container workspace. In a background worker, it runs from the assigned folder.
 - Prefer CLI discovery for developer workflows: run `<tool> --help`, inspect subcommands, use `--dry-run`, `--verbose`, and `--format json` when available before committing changes.
 - Prefer small composable CLIs over loading large tool catalogs into context. Use MCP-style integrations only when governance, multi-tenant permissions, or non-CLI APIs justify the schema overhead.
-- Shell commands run inside the Docker container and are audited.
-- `list_files` lists workspace files. Use it before assuming a path exists.
-- `read_file` reads UTF-8 text files from the workspace. Do not use it for images.
-- `write_file` creates or fully rewrites UTF-8 text files.
-- `edit_file` performs exact UTF-8 text replacements. Use it for small, targeted edits when the old text is unambiguous.
-- `apply_patch` applies Codex-style patches for larger or multi-file edits. Use it when the change is easier to review as add/update/delete hunks.
-- `inspect_image` inspects local workspace PNG, JPEG, WebP, or GIF files with the configured vision-capable model.
-- `browser_visit` uses Playwright Chromium for rendered page checks.
-- `exa_search` uses the Exa API for external/current web search when `EXA_API_KEY` is configured. Prefer it over ad hoc scraping for research.
+- bash commands run inside the Docker container and are audited. If bash output is over 50k chars, the response is truncated and the full output is saved under `/tmp/pebble_shell_tool_outputs/`.
+- `ls` lists workspace files. Use it before assuming a path exists.
+- `glob` finds workspace files by glob pattern.
+- `grep` searches text files with a regex pattern.
+- `read` reads UTF-8 text files from the workspace. Do not use it for images.
+- `write` creates or fully rewrites UTF-8 text files.
+- `edit` performs exact UTF-8 text replacements. Use it for small, targeted edits when the old text is unambiguous.
+- `patch` applies Codex-style patches for larger or multi-file edits. Use it when the change is easier to review as add/update/delete hunks.
+- `read_image` inspects local workspace PNG, JPEG, WebP, or GIF files with the configured vision-capable model.
+- For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use `curl` through `bash`; do not use Playwright.
+- For rendered browser behavior and UI verification, use Playwright CLI or a short Playwright script through `bash`.
+- `websearch` uses the Exa API for external/current web search when `EXA_API_KEY` is configured. Prefer it over ad hoc scraping for research.
 - `publish_static_site` copies a workspace file or directory to `/workspace/public/{name}` so it can be opened at `/public/{name}/...` through the agent HTTP service.
 - `send_msg` sends a brief progress update to the user during a long foreground task. Keep it short, ideally under 400 characters. Do not use it for the final answer; the final assistant response is sent normally when the turn ends.
 - `public_sites_list` lists currently published static sites.
-- `send_file_to_user` sends a workspace file back to the user; use it for generated PDFs, reports, images, or archives.
-- Chat uploads are saved under `sent_attachments`. Inspect non-image files with normal file/shell tools when relevant. Images may already be included directly in the model message, so do not re-inspect an uploaded image path unless the user asks about the saved file later.
+- `send_file` sends a workspace file back to the user; use it for generated PDFs, reports, images, or archives.
+- Chat uploads are saved under `sent_attachments`. Inspect non-image files with normal file/bash tools when relevant. Images may already be included directly in the model message, so do not re-inspect an uploaded image path unless the user asks about the saved file later.
 - `process_start`, `processes_list`, `process_status`, `process_logs`, and `process_stop` manage long-running workspace processes such as dev servers.
-- `background_task_start` starts one long-running background worker.
+- `background_task_start(prompt, folder)` starts one long-running background worker. `folder` is required; `/name` maps to `/workspace/name`, and missing folders are created.
 - `background_agents_status` shows Pebble a readable dashboard of background workers, including elapsed time, model, token usage when available, recent activity, and flags.
-- `background_task_status`, `background_tasks_list`, `background_task_events`, `background_task_ask`, `background_task_message`, and `background_task_cancel` inspect, question, resume, redirect, or cancel specific workers.
-- Background workers edit their own `/workspace/background_jobs/{job_id}/` folder by default and do not have heartbeat behavior.
+- `background_task_status`, `background_tasks_list`, `background_task_events`, `background_task_ask`, `background_task_pause`, `background_task_message`, and `background_task_cancel` inspect, question, pause, resume, redirect, or cancel specific workers.
+- Background workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`.
+- Background workers edit their assigned folder by default and do not have heartbeat behavior.
 - `set_runtime_config` persists safe runtime changes such as model and heartbeat interval.
 - `webhook_hook_save` registers external event hooks such as email/webhook triggers.
 - `self_improvements_list` shows recent self-improvements, hooks, and webhook activity.
@@ -30,4 +34,4 @@
 - `cron_jobs_list` lists scheduled jobs and recent run results.
 - `cron_job_set_enabled` pauses or resumes a scheduled job.
 - `shell_audit_recent` lists recent shell command audit records.
-- Durable self-memory lives in `context/MEMORY.md`; use normal file tools such as `read_file`, `edit_file`, `write_file`, or `apply_patch` to maintain it.
+- Durable self-memory lives in `context/MEMORY.md`; use normal file tools such as `read`, `edit`, `write`, or `patch` to maintain it.
