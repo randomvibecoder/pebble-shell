@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pty
 import select
 import signal
 import subprocess
@@ -24,6 +25,8 @@ class TerminalSession:
     started_at: float
     log_path: Path
     process: subprocess.Popen[bytes]
+    tty: bool = False
+    pty_master_fd: int | None = None
     output: bytearray = field(default_factory=bytearray)
     read_offset: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -59,22 +62,41 @@ class BackgroundProcessManager:
         executable = shell or "/bin/bash"
         session_id = self._allocate_session_id()
         log_path = self.state_dir / f"session_{session_id}.log"
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            shell=True,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            executable=executable,
-            start_new_session=True,
-        )
+        master_fd: int | None = None
+        slave_fd: int | None = None
+        if tty:
+            master_fd, slave_fd = pty.openpty()
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                shell=True,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                executable=executable,
+                start_new_session=True,
+                close_fds=True,
+            )
+            os.close(slave_fd)
+        else:
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                shell=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                executable=executable,
+                start_new_session=True,
+            )
         session = TerminalSession(
             session_id=session_id,
             command=command,
             started_at=time.time(),
             log_path=log_path,
             process=process,
+            tty=tty,
+            pty_master_fd=master_fd,
         )
         self.sessions[session_id] = session
         threading.Thread(target=self._reader, args=(session,), daemon=True).start()
@@ -89,10 +111,13 @@ class BackgroundProcessManager:
     ) -> dict[str, Any]:
         session = self._session(session_id)
         if chars and session.process.poll() is None:
-            if session.process.stdin is None:
+            if session.pty_master_fd is not None:
+                os.write(session.pty_master_fd, chars.encode("utf-8", errors="replace"))
+            elif session.process.stdin is None:
                 raise ValueError(f"Session {session_id} does not accept stdin")
-            session.process.stdin.write(chars.encode("utf-8", errors="replace"))
-            session.process.stdin.flush()
+            else:
+                session.process.stdin.write(chars.encode("utf-8", errors="replace"))
+                session.process.stdin.flush()
         return self._wait_and_status(session, yield_time_ms, max_output_tokens, incremental=True)
 
     def list(self) -> list[dict[str, Any]]:
@@ -120,8 +145,11 @@ class BackgroundProcessManager:
         return self._status_dict(session)
 
     def _reader(self, session: TerminalSession) -> None:
-        assert session.process.stdout is not None
-        fd = session.process.stdout.fileno()
+        if session.pty_master_fd is not None:
+            fd = session.pty_master_fd
+        else:
+            assert session.process.stdout is not None
+            fd = session.process.stdout.fileno()
         with session.log_path.open("ab") as log_file:
             while True:
                 ready, _, _ = select.select([fd], [], [], 0.1)
@@ -164,9 +192,6 @@ class BackgroundProcessManager:
                 break
             time.sleep(0.05)
         status = self._status_dict(session, max_output_tokens=max_output_tokens, incremental=incremental)
-        if tty:
-            status["tty"] = False
-            status["tty_note"] = "PTY allocation is not implemented yet; command ran with pipe-based stdin/stdout."
         return status
 
     def _status_dict(
@@ -192,6 +217,7 @@ class BackgroundProcessManager:
             "started_at": session.started_at,
             "log_file": f".pebble_shell/terminal_sessions/session_{session.session_id}.log",
             "output": _decode_tail(output, _clamp_output_chars(max_output_tokens)),
+            "tty": session.tty,
         }
 
     def _session(self, session_id: int) -> TerminalSession:

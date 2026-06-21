@@ -410,6 +410,7 @@ def test_exec_command_supports_codex_shaped_arguments(tmp_path: Path) -> None:
     assert result.ok
     payload = json.loads(result.output)
     assert payload["running"] is False
+    assert payload["tty"] is True
     assert payload["output"].strip() == str(tmp_path / "subdir")
 
 
