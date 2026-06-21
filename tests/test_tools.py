@@ -130,12 +130,16 @@ def test_file_edit_tools_are_exposed(tmp_path: Path) -> None:
 
 def test_send_msg_is_foreground_only_tool_definition(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+    worker_tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, text_sender=lambda text: "sent")
 
     foreground_names = {definition["function"]["name"] for definition in tools.definitions(include_background_tools=True)}
     background_names = {definition["function"]["name"] for definition in tools.definitions(include_background_tools=False)}
+    worker_background_names = {definition["function"]["name"] for definition in worker_tools.definitions(include_background_tools=False)}
 
     assert "send_msg" in foreground_names
     assert "send_msg" not in background_names
+    assert "send_msg" in worker_background_names
+    assert "send_file" not in worker_background_names
 
 
 def test_model_tools_do_not_expose_route_parameters(tmp_path: Path) -> None:

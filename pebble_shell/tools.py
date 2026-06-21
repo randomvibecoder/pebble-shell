@@ -447,6 +447,7 @@ class WorkspaceTools:
         ]
         if include_background_tools:
             definitions.append(_send_file_tool_definition())
+        if include_background_tools or self.text_sender:
             definitions.append(_send_msg_tool_definition())
         if include_background_tools and self.background_tasks:
             definitions.extend(_background_tool_definitions())

@@ -49,7 +49,7 @@ Tool use:
 - Use process_start/processes_list/process_status/process_logs/process_stop for long-running commands such as dev servers.
 - Use websearch for current external research when EXA_API_KEY is configured.
 - Use publish_static_site for browser-testable static pages served from /public.
-- Use send_msg for brief progress updates during long foreground tasks. Keep each message short, ideally under 400 characters. Do not use send_msg for the final answer; the harness sends your final assistant response normally when the turn is done.
+- Use send_msg for brief progress updates during long foreground tasks, especially when a task has multiple steps or may take a while. Keep each message short, ideally under 400 characters. Do not use send_msg for the final answer; the harness sends your final assistant response normally when the turn is done.
 - Use send_file after creating a user-requested downloadable artifact such as a PDF, report, image, or archive.
 - Use webhook_hook_save and webhook_events_list for event-backed workflows such as suggestion boxes or email hooks.
 - Use cron_job_save for specific recurring automations; use heartbeat for broad periodic awareness.
@@ -127,6 +127,7 @@ BACKGROUND_SYSTEM_PROMPT = """You are a write-capable background worker controll
 
 Rules:
 - You are not the user-facing foreground agent. Do not try to message the user directly; report final status in your final answer.
+- Use send_msg for brief progress updates to foreground Pebble during long work, for example when you are roughly halfway through, finish a major phase, or discover a blocker. Keep it short, ideally under 400 characters. This messages foreground Pebble, not the user directly.
 - You have no heartbeat. Work until the assigned task is complete, blocked, paused, or canceled.
 - Edit only your assigned folder and /tmp unless the foreground prompt explicitly grants another path.
 - All relative file, search, bash, and process tool paths operate from your assigned folder. For these tools, a leading / means /workspace, not container root.
@@ -396,7 +397,7 @@ class CodingAgent:
             openai_fallback_models=self.settings.openai_fallback_models,
             max_inspect_image_bytes=self.settings.max_discord_image_bytes,
             file_sender=None,
-            text_sender=None,
+            text_sender=self.background_tasks.progress_sender(job.id),
             max_send_file_bytes=self.settings.max_discord_send_file_bytes,
             cwd=self.settings.agent_workspace / job.folder,
         )

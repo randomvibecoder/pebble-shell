@@ -537,6 +537,19 @@ class BackgroundTaskService:
         self.store.pause_job(job_id)
         return ToolResult(ok=True, output=json.dumps(self.status(job_id), sort_keys=True))
 
+    def progress_sender(self, job_id: str):
+        def send(text: str) -> str:
+            message = text.strip()
+            if not message:
+                raise ValueError("progress message cannot be empty")
+            self.store.add_event(job_id, "progress", message[:4000])
+            loop = self._loop
+            if loop is not None and not loop.is_closed():
+                asyncio.run_coroutine_threadsafe(self._wake_foreground(job_id, "progress", message), loop)
+            return "Sent progress update to foreground Pebble"
+
+        return send
+
     def message_tool(self, job_id: str, message: str) -> ToolResult:
         self.store.enqueue_message(job_id, message)
         job = self.store.get_job(job_id)
@@ -739,14 +752,16 @@ class BackgroundTaskService:
         self.store.add_event(job_id, "self_check", decision)
         return decision
 
-    async def _wake_foreground(self, job_id: str, event: str) -> None:
+    async def _wake_foreground(self, job_id: str, event: str, progress_message: str = "") -> None:
         job = self.store.get_job(job_id)
         if not job:
             return
         prefix = f"[background agent {event}] id={job.id} folder=/{job.folder}"
+        progress = f"Progress message: {progress_message[:4000]}\n\n" if progress_message else ""
         prompt = (
             f"{prefix}\n\n"
             f"Background task `{job.id}` emitted `{event}`.\n\n"
+            f"{progress}"
             f"Title: {job.title}\n"
             f"Status: {job.status}\n"
             f"Folder: {job.folder}\n"

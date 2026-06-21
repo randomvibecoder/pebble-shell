@@ -16,7 +16,7 @@
 - For rendered browser behavior and UI verification, use Playwright CLI or a short Playwright script through `bash`.
 - `websearch` uses the Exa API for external/current web search when `EXA_API_KEY` is configured. Prefer it over ad hoc scraping for research.
 - `publish_static_site` copies a workspace file or directory to `/workspace/public/{name}` so it can be opened at `/public/{name}/...` through the agent HTTP service.
-- `send_msg` sends a brief progress update to the user during a long foreground task. Keep it short, ideally under 400 characters. Do not use it for the final answer; the final assistant response is sent normally when the turn ends.
+- `send_msg` sends a brief progress update during long work. In foreground it messages the user; in a background worker it messages foreground Pebble. Keep it short, ideally under 400 characters. Do not use it for the final answer; the final assistant response is sent normally when the turn ends.
 - `public_sites_list` lists currently published static sites.
 - `send_file` sends a workspace file back to the user; use it for generated PDFs, reports, images, or archives.
 - Chat uploads are saved under `sent_attachments`. Inspect non-image files with normal file/bash tools when relevant. Images may already be included directly in the model message, so do not re-inspect an uploaded image path unless the user asks about the saved file later.

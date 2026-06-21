@@ -176,6 +176,33 @@ async def test_background_task_pause_stops_after_current_step_and_message_resume
 
 
 @pytest.mark.asyncio
+async def test_background_worker_send_msg_records_progress_and_wakes_foreground(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    delivered: list[str] = []
+
+    async def deliver(text: str) -> None:
+        delivered.append(text)
+
+    agent.set_deliver(deliver)
+    job = agent.background_store.create_job("make progress", "make progress", "background_jobs/test")
+    agent.client = FakeClient(
+        [
+            FakeResponse(ToolMessage("send_msg", {"msg": "Halfway through the build."})),
+            FakeResponse(FinalMessage("Progress noted.")),
+            FakeResponse(FinalMessage("Continuing after progress update.")),
+        ]
+    )  # type: ignore[assignment]
+
+    response = await agent.run_background_task(job)
+
+    assert response.content == "Continuing after progress update."
+    events = agent.background_store.list_events(job.id, limit=10)
+    assert any(event["kind"] == "progress" and "Halfway through" in event["message"] for event in events)
+    assert any(event["kind"] == "foreground_wakeup" and "Progress noted" in event["message"] for event in events)
+    assert delivered == ["Progress noted."]
+
+
+@pytest.mark.asyncio
 async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     agent.bind_background_loop()
