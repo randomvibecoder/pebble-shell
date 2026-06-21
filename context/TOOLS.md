@@ -23,7 +23,9 @@
 - `process_start`, `processes_list`, `process_status`, `process_logs`, and `process_stop` manage long-running workspace processes such as dev servers.
 - `background_task_start(prompt, folder)` starts one long-running background worker. `folder` is required; `/name` maps to `/workspace/name`, and missing folders are created.
 - `background_agents_status` shows Pebble a readable dashboard of background workers, including elapsed time, model, token usage when available, recent activity, and flags.
-- `background_task_status`, `background_tasks_list`, `background_task_events`, `background_task_ask`, `background_task_pause`, `background_task_message`, and `background_task_cancel` inspect, question, pause, resume, redirect, or cancel specific workers.
+- `background_task_status`, `background_tasks_list`, `background_task_events`, `background_task_ask`, `background_task_pause`, `background_task_message`, `background_task_cancel`, and `background_task_finish` inspect, question, pause, resume, redirect, cancel, or clean up specific workers.
+- `background_task_message(job_id, message)` can send follow-up work to a running, pausing, paused, blocked, or completed worker. Paused, blocked, and completed workers resume with the same job id, assigned folder, and stored context.
+- `background_task_finish(job_id)` is destructive cleanup for inactive workers only. It deletes the job row, queued messages, events, and stored context. Use it only when that worker is definitely no longer needed or cleanup/storage pressure requires it.
 - Background workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`.
 - Background workers edit their assigned folder by default and do not have heartbeat behavior.
 - `set_runtime_config` persists safe runtime changes such as model and heartbeat interval.

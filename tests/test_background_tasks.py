@@ -374,6 +374,104 @@ async def test_background_job_blocked_remains_messageable_and_resumes(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_background_job_completed_can_be_messaged_and_completed_again(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
+    agent.background_store.save_context(job.id, [{"role": "assistant", "content": "Original page is done."}])
+    agent.background_store.complete_job(job.id, "Original page complete.", 2)
+    completed = agent.background_store.get_job(job.id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.finished_at is not None
+    old_finished_at = completed.finished_at
+
+    agent.client = FakeClient(
+        [
+            FakeResponse(FinalMessage("Applied the follow-up fix.")),
+            FakeResponse(FinalMessage("COMPLETE")),
+        ]
+    )  # type: ignore[assignment]
+
+    result = agent.background_tasks.message_tool(job.id, "Fix the typo the user just found.")
+
+    assert result.ok
+    reopened = agent.background_store.get_job(job.id)
+    assert reopened is not None
+    assert reopened.id == job.id
+    assert reopened.folder == job.folder
+    assert reopened.status == "running"
+    assert reopened.finished_at is None
+    assert reopened.result == "Original page complete."
+    assert old_finished_at
+
+    await agent.background_tasks._run_job(job.id)
+
+    rerun = agent.background_store.get_job(job.id)
+    assert rerun is not None
+    assert rerun.status == "completed"
+    assert rerun.result == "Applied the follow-up fix."
+    context = agent.background_store.get_context(job.id)
+    assert any("Original page is done" in str(message.get("content")) for message in context)
+    assert any("Fix the typo" in str(message.get("content")) for message in context)
+    events = agent.background_store.list_events(job.id, limit=20)
+    assert any(event["kind"] == "reopened" for event in events)
+    assert any(event["kind"] == "message_delivered" and "Fix the typo" in event["message"] for event in events)
+
+
+def test_background_job_canceled_rejects_messages(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    job = agent.background_store.create_job("cancel me", "cancel", "background_jobs/test")
+    agent.background_store.mark_cancelled(job.id, 0)
+
+    result = agent.tools.run("background_task_message", {"job_id": job.id, "message": "Resume this canceled worker."})
+
+    assert not result.ok
+    assert "not messageable" in result.output
+    canceled = agent.background_store.get_job(job.id)
+    assert canceled is not None
+    assert canceled.status == "canceled"
+
+
+def test_background_task_finish_deletes_inactive_job_records_and_context(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    job = agent.background_store.create_job("make cleanup data", "cleanup", "background_jobs/test")
+    agent.background_store.save_context(job.id, [{"role": "assistant", "content": "stored context"}])
+    agent.background_store.enqueue_message(job.id, "queued instruction")
+    agent.background_store.complete_job(job.id, "done", 1)
+
+    result = agent.tools.run("background_task_finish", {"job_id": job.id})
+
+    assert result.ok
+    assert "deleted job records and stored context" in result.output
+    assert agent.background_store.get_job(job.id) is None
+    assert agent.background_store.get_context(job.id) == []
+    assert agent.background_store.list_events(job.id, limit=10) == []
+    assert agent.background_store.drain_messages(job.id) == []
+
+
+def test_background_task_finish_rejects_active_worker(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    job = agent.background_store.create_job("still running", "running", "background_jobs/test")
+
+    result = agent.tools.run("background_task_finish", {"job_id": job.id})
+
+    assert not result.ok
+    assert "pause or cancel" in result.output
+    assert agent.background_store.get_job(job.id) is not None
+
+
+def test_background_tool_schema_includes_completed_resume_and_finish(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    definitions = {definition["function"]["name"]: definition["function"]["description"] for definition in agent.tools.definitions()}
+
+    assert "background_task_finish" in definitions
+    assert "completed" in definitions["background_task_message"]
+    assert "same job id, folder, and stored context" in definitions["background_task_message"]
+    assert "Destructively delete" in definitions["background_task_finish"]
+    assert "stored context" in definitions["background_task_finish"]
+
+
+@pytest.mark.asyncio
 async def test_background_agents_status_table_uses_flash_activity(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")

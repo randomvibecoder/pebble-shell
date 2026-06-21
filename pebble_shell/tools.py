@@ -537,6 +537,8 @@ class WorkspaceTools:
                 return self.background_task_pause(arguments["job_id"])
             if name == "background_task_message":
                 return self.background_task_message(arguments["job_id"], arguments["message"])
+            if name == "background_task_finish":
+                return self.background_task_finish(arguments["job_id"])
             if name == "background_task_events":
                 return self.background_task_events(arguments["job_id"], int(arguments.get("limit", 20)))
         except KeyError as exc:
@@ -986,6 +988,11 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Background task service is not enabled")
         return self.background_tasks.message_tool(job_id, message)
 
+    def background_task_finish(self, job_id: str) -> ToolResult:
+        if not self.background_tasks:
+            return ToolResult(ok=False, output="Background task service is not enabled")
+        return self.background_tasks.finish_tool(job_id)
+
     def background_task_events(self, job_id: str, limit: int = 20) -> ToolResult:
         if not self.background_tasks:
             return ToolResult(ok=False, output="Background task service is not enabled")
@@ -1232,7 +1239,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "background_task_message",
-                "description": "Send a new foreground instruction to a running, blocked, or needs-attention background worker. Paused workers resume with the same stored context and continue the original task.",
+                "description": "Send a new foreground instruction to a running, pausing, paused, blocked, or completed background worker. Paused, blocked, and completed workers resume with the same job id, folder, and stored context.",
                 "parameters": {
                     "type": "object",
                     "required": ["job_id", "message"],
@@ -1240,6 +1247,18 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
                         "job_id": {"type": "string"},
                         "message": {"type": "string"},
                     },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "background_task_finish",
+                "description": "Destructively delete one inactive background worker's records, queued messages, events, and stored context. Use only when the worker is definitely no longer needed or cleanup/storage pressure requires it. Active workers must be paused or canceled first.",
+                "parameters": {
+                    "type": "object",
+                    "required": ["job_id"],
+                    "properties": {"job_id": {"type": "string"}},
                 },
             },
         },

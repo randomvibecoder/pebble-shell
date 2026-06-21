@@ -136,6 +136,8 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
     core_prompt = fake_client.chat.completions.calls[0]["messages"][0]["content"]
     assert "one foreground supervisor and up to four long-running background workers" in core_prompt
     assert "background_task_start" in core_prompt
+    assert "running/paused/blocked/completed worker" in core_prompt
+    assert "Use background_task_finish only for destructive cleanup" in core_prompt
     assert "process_start/processes_list/process_status/process_logs/process_stop" in core_prompt
     assert "context/MEMORY.md" in core_prompt
     assert "record_memory" not in core_prompt

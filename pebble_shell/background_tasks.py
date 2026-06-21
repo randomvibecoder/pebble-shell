@@ -20,7 +20,8 @@ if TYPE_CHECKING:
 ACTIVE_STATUSES = ("running", "pausing", "cancelling")
 PAUSED_STATUSES = ("paused", "blocked")
 TERMINAL_STATUSES = ("completed", "canceled")
-MESSAGEABLE_STATUSES = ("running", "pausing", "paused", "blocked")
+RESUMABLE_STATUSES = ("paused", "blocked", "completed")
+MESSAGEABLE_STATUSES = ("running", "pausing", "paused", "blocked", "completed")
 JOB_SELECT_COLUMNS = """
     id, title, prompt, folder, status, steps, result, error,
     created_at, updated_at, started_at, finished_at, model_calls, prompt_tokens,
@@ -239,7 +240,7 @@ class BackgroundTaskStore:
                 "insert into background_messages(job_id, content) values (?, ?)",
                 (job_id, message),
             )
-            if job.status in PAUSED_STATUSES:
+            if job.status in RESUMABLE_STATUSES:
                 conn.execute(
                     """
                     update background_jobs
@@ -248,7 +249,17 @@ class BackgroundTaskStore:
                     """,
                     (time.time(), job_id),
                 )
+        if job.status == "completed":
+            self.add_event(job_id, "reopened", "Completed background worker reopened with a new instruction.")
         self.add_event(job_id, "message_queued", message[:4000])
+
+    def delete_job(self, job_id: str) -> None:
+        if not self.get_job(job_id):
+            raise ValueError(f"Unknown background job: {job_id}")
+        with self._connect() as conn:
+            conn.execute("delete from background_messages where job_id = ?", (job_id,))
+            conn.execute("delete from background_events where job_id = ?", (job_id,))
+            conn.execute("delete from background_jobs where id = ?", (job_id,))
 
     def drain_messages(self, job_id: str) -> list[str]:
         with self._connect() as conn:
@@ -556,6 +567,18 @@ class BackgroundTaskService:
         if job and job.status == "running":
             self._schedule_job(job_id)
         return ToolResult(ok=True, output=f"Queued message for background job {job_id}")
+
+    def finish_tool(self, job_id: str) -> ToolResult:
+        job = self.store.get_job(job_id)
+        if not job:
+            return ToolResult(ok=False, output=f"Unknown background job: {job_id}")
+        if job.status in ACTIVE_STATUSES:
+            return ToolResult(
+                ok=False,
+                output=f"Background job {job_id} is {job.status}; pause or cancel it before destructive finish cleanup.",
+            )
+        self.store.delete_job(job_id)
+        return ToolResult(ok=True, output=f"Finished cleanup for background job {job_id}; deleted job records and stored context.")
 
     def ask_tool(self, job_id: str, question: str) -> ToolResult:
         loop = self._loop
