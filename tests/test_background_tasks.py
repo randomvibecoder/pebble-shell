@@ -260,6 +260,8 @@ async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> No
     tool_names = {tool["function"]["name"] for tool in first_call["tools"]}
     assert "background_task_start" not in tool_names
     system_text = "\n".join(str(message.get("content", "")) for message in first_call["messages"] if message.get("role") == "system")
+    assert "Use send_msg often enough to keep foreground Pebble informed" in system_text
+    assert "Summarize what changed or what you verified" in system_text
     assert "Do not use exec_command as a way to hand off the assigned job" in system_text
     prompt_text = "\n".join(str(message.get("content", "")) for message in first_call["messages"])
     assert "Original Discord user" not in prompt_text
