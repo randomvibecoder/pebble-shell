@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -60,12 +61,12 @@ class SelfImprovementStore:
     def get_hook(self, name: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
-                "select name, prompt, enabled from webhook_hooks where name = ?",
+                "select name, prompt, enabled, updated_at from webhook_hooks where name = ?",
                 (name,),
             ).fetchone()
         if not row:
             return None
-        return {"name": row[0], "prompt": row[1], "enabled": bool(row[2])}
+        return {"name": row[0], "prompt": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
 
     def list_hooks(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -77,6 +78,27 @@ class SelfImprovementStore:
             for row in rows
         ]
 
+    def set_hook_enabled(self, name: str, enabled: bool) -> None:
+        _validate_name(name)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                update webhook_hooks
+                set enabled = ?, updated_at = current_timestamp
+                where name = ?
+                """,
+                (int(enabled), name),
+            )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Unknown hook: {name}")
+
+    def delete_hook(self, name: str) -> None:
+        _validate_name(name)
+        with self._connect() as conn:
+            cursor = conn.execute("delete from webhook_hooks where name = ?", (name,))
+        if cursor.rowcount == 0:
+            raise ValueError(f"Unknown hook: {name}")
+
     def record_webhook_event(self, name: str, payload: dict[str, Any], background: bool) -> int:
         _validate_name(name)
         with self._connect() as conn:
@@ -85,6 +107,18 @@ class SelfImprovementStore:
                 (name, json.dumps(payload, sort_keys=True), int(background)),
             )
             return int(cursor.lastrowid)
+
+    def get_webhook_event(self, event_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select id, name, payload, background, status, result_excerpt, error, created_at, processed_at
+                from webhook_events
+                where id = ?
+                """,
+                (event_id,),
+            ).fetchone()
+        return _webhook_event_row(row) if row else None
 
     def mark_webhook_event_processing(self, event_id: int) -> None:
         self._update_webhook_event(event_id, "processing")
@@ -126,20 +160,7 @@ class SelfImprovementStore:
                 """,
                 (limit,),
             ).fetchall()
-        return [
-            {
-                "id": row[0],
-                "name": row[1],
-                "payload": json.loads(row[2]),
-                "background": bool(row[3]),
-                "status": row[4],
-                "result_excerpt": row[5],
-                "error": row[6],
-                "created_at": row[7],
-                "processed_at": row[8],
-            }
-            for row in rows
-        ]
+        return [_webhook_event_row(row) for row in rows]
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -187,6 +208,30 @@ class SelfImprovementStore:
 def _validate_name(name: str) -> None:
     if not NAME_RE.fullmatch(name):
         raise ValueError("name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens")
+
+
+def format_webhook_message(name: str, prompt: str, payload: dict[str, Any], now: datetime | None = None) -> str:
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return (
+        f"This is a webhook turn. The time is {timestamp}.\n\n"
+        f"Webhook hook `{name}` fired.\n\n"
+        f"Hook instructions:\n{prompt}\n\n"
+        f"Payload JSON:\n{payload}"
+    )
+
+
+def _webhook_event_row(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "name": row[1],
+        "payload": json.loads(row[2]),
+        "background": bool(row[3]),
+        "status": row[4],
+        "result_excerpt": row[5],
+        "error": row[6],
+        "created_at": row[7],
+        "processed_at": row[8],
+    }
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

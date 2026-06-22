@@ -32,6 +32,7 @@ MAX_SEND_FILE_BYTES = 25_000_000
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 FileSender = Callable[[Path], str]
 TextSender = Callable[[str], str]
+WebhookReplayer = Callable[[int], str]
 
 
 class ToolResult(BaseModel):
@@ -60,6 +61,7 @@ class WorkspaceTools:
         max_inspect_image_bytes: int = MAX_INSPECT_IMAGE_BYTES,
         file_sender: FileSender | None = None,
         text_sender: TextSender | None = None,
+        webhook_replayer: WebhookReplayer | None = None,
         max_send_file_bytes: int = MAX_SEND_FILE_BYTES,
         cwd: Path | None = None,
     ) -> None:
@@ -86,6 +88,7 @@ class WorkspaceTools:
         self.max_inspect_image_bytes = max(1, max_inspect_image_bytes)
         self.file_sender = file_sender
         self.text_sender = text_sender
+        self.webhook_replayer = webhook_replayer
         self.max_send_file_bytes = max(1, max_send_file_bytes)
 
     def definitions(self, include_background_tools: bool = True) -> list[dict[str, Any]]:
@@ -338,8 +341,8 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "webhook_hook_save",
-                    "description": "Create or update a named webhook hook. POST /webhooks/{name} triggers an agent run with the hook prompt and JSON payload in this chat.",
+                    "name": "hook_set",
+                    "description": "Create or update a named HTTP webhook hook. POST /webhooks/{name} triggers an agent run with this hook prompt and the JSON payload.",
                     "parameters": {
                         "type": "object",
                         "required": ["name", "prompt"],
@@ -353,20 +356,90 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "self_improvements_list",
-                    "description": "List recent self-improvements, registered hooks, and recent webhook events.",
+                    "name": "hook_list",
+                    "description": "List registered HTTP webhook hooks and whether each hook is enabled.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
             {
                 "type": "function",
                 "function": {
-                    "name": "webhook_events_list",
-                    "description": "List recent webhook payload receipts and processing status for hooks such as suggestion boxes.",
+                    "name": "hook_show",
+                    "description": "Show one registered HTTP webhook hook, including its prompt and enabled state.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {"name": {"type": "string"}},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hook_enable",
+                    "description": "Enable a registered HTTP webhook hook so POST /webhooks/{name} can trigger it.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {"name": {"type": "string"}},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hook_disable",
+                    "description": "Disable a registered HTTP webhook hook without deleting its prompt or event history.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {"name": {"type": "string"}},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hook_remove",
+                    "description": "Remove a registered HTTP webhook hook. Existing event history remains inspectable.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {"name": {"type": "string"}},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "self_improvements_list",
+                    "description": "List recent self-improvements, registered hooks, and recent hook events.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hook_events",
+                    "description": "List recent HTTP webhook payload receipts and processing status for hooks such as suggestion boxes.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hook_event_replay",
+                    "description": "Replay a prior webhook event by event id. This schedules a new foreground agent run with the original hook payload.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["event_id"],
+                        "properties": {
+                            "event_id": {"type": "integer"},
                         },
                     },
                 },
@@ -484,12 +557,24 @@ class WorkspaceTools:
                 return self.get_runtime_config()
             if name == "set_runtime_config":
                 return self.set_runtime_config(arguments["key"], arguments["value"])
-            if name == "webhook_hook_save":
-                return self.webhook_hook_save(arguments["name"], arguments["prompt"])
+            if name == "hook_set":
+                return self.hook_set(arguments["name"], arguments["prompt"])
+            if name == "hook_list":
+                return self.hook_list()
+            if name == "hook_show":
+                return self.hook_show(arguments["name"])
+            if name == "hook_enable":
+                return self.hook_set_enabled(arguments["name"], True)
+            if name == "hook_disable":
+                return self.hook_set_enabled(arguments["name"], False)
+            if name == "hook_remove":
+                return self.hook_remove(arguments["name"])
             if name == "self_improvements_list":
                 return self.self_improvements_list()
-            if name == "webhook_events_list":
-                return self.webhook_events_list(int(arguments.get("limit", 20)))
+            if name == "hook_events":
+                return self.hook_events(int(arguments.get("limit", 20)))
+            if name == "hook_event_replay":
+                return self.hook_event_replay(int(arguments["event_id"]))
             if name == "cron_job_save":
                 return self.cron_job_save(
                     arguments["name"],
@@ -881,12 +966,37 @@ class WorkspaceTools:
         self.runtime_config.set(key, value)
         return ToolResult(ok=True, output=f"Set {key}={value}")
 
-    def webhook_hook_save(self, name: str, prompt: str) -> ToolResult:
+    def hook_set(self, name: str, prompt: str) -> ToolResult:
         if not self.self_improvement:
             return ToolResult(ok=False, output="Self-improvement store is not enabled")
         self.self_improvement.upsert_hook(name, prompt)
-        self.self_improvement.record("webhook_hook", name, f"Webhook hook {name}", {})
-        return ToolResult(ok=True, output=f"Saved webhook hook {name}; trigger with POST /webhooks/{name}")
+        self.self_improvement.record("hook", name, f"HTTP webhook hook {name}", {})
+        return ToolResult(ok=True, output=f"Saved hook {name}; trigger with POST /webhooks/{name}")
+
+    def hook_list(self) -> ToolResult:
+        if not self.self_improvement:
+            return ToolResult(ok=False, output="Self-improvement store is not enabled")
+        return ToolResult(ok=True, output=json.dumps(self.self_improvement.list_hooks(), sort_keys=True))
+
+    def hook_show(self, name: str) -> ToolResult:
+        if not self.self_improvement:
+            return ToolResult(ok=False, output="Self-improvement store is not enabled")
+        hook = self.self_improvement.get_hook(name)
+        if not hook:
+            return ToolResult(ok=False, output=f"Unknown hook: {name}")
+        return ToolResult(ok=True, output=json.dumps(hook, sort_keys=True))
+
+    def hook_set_enabled(self, name: str, enabled: bool) -> ToolResult:
+        if not self.self_improvement:
+            return ToolResult(ok=False, output="Self-improvement store is not enabled")
+        self.self_improvement.set_hook_enabled(name, enabled)
+        return ToolResult(ok=True, output=f"Set hook {name} enabled={enabled}")
+
+    def hook_remove(self, name: str) -> ToolResult:
+        if not self.self_improvement:
+            return ToolResult(ok=False, output="Self-improvement store is not enabled")
+        self.self_improvement.delete_hook(name)
+        return ToolResult(ok=True, output=f"Removed hook {name}; existing event history was kept")
 
     def self_improvements_list(self) -> ToolResult:
         if not self.self_improvement:
@@ -896,17 +1006,27 @@ class WorkspaceTools:
             output=json.dumps(
                 {
                     "improvements": self.self_improvement.list_records(),
-                    "webhook_hooks": self.self_improvement.list_hooks(),
-                    "webhook_events": self.self_improvement.list_webhook_events(),
+                    "hooks": self.self_improvement.list_hooks(),
+                    "hook_events": self.self_improvement.list_webhook_events(),
                 },
                 sort_keys=True,
             ),
         )
 
-    def webhook_events_list(self, limit: int = 20) -> ToolResult:
+    def hook_events(self, limit: int = 20) -> ToolResult:
         if not self.self_improvement:
             return ToolResult(ok=False, output="Self-improvement store is not enabled")
         return ToolResult(ok=True, output=json.dumps(self.self_improvement.list_webhook_events(max(1, min(limit, 50))), sort_keys=True))
+
+    def hook_event_replay(self, event_id: int) -> ToolResult:
+        if not self.self_improvement:
+            return ToolResult(ok=False, output="Self-improvement store is not enabled")
+        if not self.webhook_replayer:
+            return ToolResult(ok=False, output="Webhook replay scheduler is not enabled")
+        event = self.self_improvement.get_webhook_event(event_id)
+        if not event:
+            return ToolResult(ok=False, output=f"Unknown webhook event: {event_id}")
+        return ToolResult(ok=True, output=self.webhook_replayer(event_id))
 
     def cron_job_save(
         self,

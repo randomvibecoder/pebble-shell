@@ -20,7 +20,7 @@ from .cron import CronStore
 from .shell_audit import ShellAuditStore
 from .memory import MemoryStore
 from .runtime_config import RuntimeConfigStore
-from .self_improvement import SelfImprovementStore
+from .self_improvement import SelfImprovementStore, format_webhook_message
 from .tools import WorkspaceTools
 
 
@@ -51,7 +51,7 @@ Tool use:
 - Use publish_static_site for browser-testable static pages served from /public.
 - When working on a long task, use send_msg to update the user while you work. Send a small update when you start meaningful work, finish a major phase, hit a blocker, or begin verification. Each update should usually be one or two short sentences and ideally under 400 characters. Do not use send_msg for the final answer; the harness sends your final assistant response normally when the turn is done.
 - Use send_file after creating a user-requested downloadable artifact such as a PDF, report, image, or archive.
-- Use webhook_hook_save and webhook_events_list for event-backed workflows such as suggestion boxes or email hooks.
+- Use hook_set, hook_list, hook_show, hook_enable, hook_disable, hook_remove, hook_events, and hook_event_replay for event-backed HTTP webhook workflows such as suggestion boxes, fake email hooks, CI alerts, or local app callbacks. External callers POST JSON to /webhooks/{name}; browser forms should usually use /webhooks/{name}?background=true so the page gets an immediate acknowledgement while you process the event.
 - Use cron_job_save for specific recurring automations; use heartbeat for broad periodic awareness.
 - Use set_runtime_config for user-requested model or heartbeat interval changes.
 - Durable self-memory lives in context/MEMORY.md. Use read, edit, write, or patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
@@ -190,6 +190,7 @@ class CodingAgent:
         self.background_store = BackgroundTaskStore(settings.background_tasks_db_path)
         self.background_tasks = BackgroundTaskService(self, self.background_store, settings.max_background_tasks)
         self._deliver: Delivery | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.tools = WorkspaceTools(
             settings.agent_workspace,
             settings.shell_timeout_seconds,
@@ -205,6 +206,7 @@ class CodingAgent:
             settings.openai_base_url,
             settings.openai_model,
             settings.openai_fallback_models,
+            webhook_replayer=self.schedule_hook_event_replay,
             max_inspect_image_bytes=settings.max_discord_image_bytes,
             max_send_file_bytes=settings.max_discord_send_file_bytes,
         )
@@ -241,7 +243,35 @@ class CodingAgent:
             return await self._run_locked(content, source, [])
 
     def bind_background_loop(self) -> None:
-        self.background_tasks.bind_loop(asyncio.get_running_loop())
+        self._loop = asyncio.get_running_loop()
+        self.background_tasks.bind_loop(self._loop)
+
+    def schedule_hook_event_replay(self, event_id: int) -> str:
+        loop = self._loop
+        if not loop or loop.is_closed():
+            return "Webhook replay could not be scheduled because the agent event loop is not bound yet"
+        loop.call_soon_threadsafe(lambda: loop.create_task(self.replay_hook_event(event_id)))
+        return f"Queued replay for webhook event {event_id}"
+
+    async def replay_hook_event(self, event_id: int) -> AgentResponse:
+        event = self.self_improvement.get_webhook_event(event_id)
+        if not event:
+            raise ValueError(f"Unknown webhook event: {event_id}")
+        hook = self.self_improvement.get_hook(str(event["name"]))
+        if not hook:
+            raise ValueError(f"Unknown hook for webhook event {event_id}: {event['name']}")
+        if not hook["enabled"]:
+            raise ValueError(f"Webhook hook is disabled: {event['name']}")
+        replay_event_id = self.self_improvement.record_webhook_event(str(event["name"]), dict(event["payload"]), background=True)
+        self.self_improvement.mark_webhook_event_processing(replay_event_id)
+        try:
+            content = format_webhook_message(str(event["name"]), str(hook["prompt"]), dict(event["payload"]))
+            response = await self.run_internal_event(content, f"webhook:{event['name']}:replay")
+        except Exception as exc:
+            self.self_improvement.mark_webhook_event_failed(replay_event_id, str(exc))
+            raise
+        self.self_improvement.mark_webhook_event_completed(replay_event_id, response.content)
+        return response
 
     async def _run_locked(
         self,

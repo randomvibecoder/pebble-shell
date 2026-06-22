@@ -31,9 +31,11 @@
 - Background workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`.
 - Background workers edit their assigned folder by default and do not have heartbeat behavior.
 - `set_runtime_config` persists safe runtime changes such as model and heartbeat interval.
-- `webhook_hook_save` registers external event hooks such as email/webhook triggers.
-- `self_improvements_list` shows recent self-improvements, hooks, and webhook activity.
-- `webhook_events_list` inspects recent webhook receipts and processing status, useful for heartbeat checks on suggestion boxes and other event-backed workflows.
+- `hook_set(name, prompt)` creates or updates an HTTP webhook hook. External callers POST JSON to `/webhooks/{name}`; browser forms should usually POST to `/webhooks/{name}?background=true`.
+- `hook_list`, `hook_show`, `hook_enable`, `hook_disable`, and `hook_remove` inspect and manage registered hooks.
+- `hook_events(limit?)` inspects recent webhook receipts and processing status, useful for heartbeat checks on suggestion boxes and other event-backed workflows.
+- `hook_event_replay(event_id)` replays a prior webhook event by scheduling a new foreground agent run with the original hook payload.
+- `self_improvements_list` shows recent self-improvements, hooks, and hook activity.
 - `cron_job_save` registers interval-based scheduled work with persisted results.
 - `cron_jobs_list` lists scheduled jobs and recent run results.
 - `cron_job_set_enabled` pauses or resumes a scheduled job.

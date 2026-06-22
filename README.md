@@ -110,14 +110,15 @@ Each worker is assigned a required folder. A folder like `/myproject` maps to `/
 The agent can improve itself through bounded, auditable primitives:
 
 - `context/MEMORY.md`: durable self-memory maintained with normal file tools.
-- `webhook_hook_save`: register a named webhook, for example an email event hook.
+- `hook_set`: register a named HTTP webhook, for example an email event hook. Manage hooks with `hook_list`, `hook_show`, `hook_enable`, `hook_disable`, and `hook_remove`.
 - `set_runtime_config`: change safe runtime settings like model or heartbeat interval.
 - `cron_job_save`: create scheduled automations with persisted run history.
+- `hook_events` and `hook_event_replay`: inspect recent webhook receipts or replay a prior event.
 - `self_improvements_list`: inspect the recent improvement ledger and hooks.
 
 These mechanisms let the agent learn workflows and connect future events without silently rewriting arbitrary core code.
 
-Webhook triggers normally return the agent result. Browser forms can use `POST /webhooks/{name}?background=true` to receive an immediate acknowledgement while the agent handles the payload asynchronously. Every accepted webhook payload is recorded in the self-improvement ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt.
+Webhook triggers normally return the agent result. Browser forms can use `POST /webhooks/{name}?background=true` to receive an immediate acknowledgement while the agent handles the payload asynchronously. Every accepted webhook payload is recorded in the self-improvement ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt. Injected webhook turns include a UTC timestamp in the same `YYYY-MM-DD HH:MM:SS UTC` style as heartbeat turns.
 
 For browser-testable pages, the agent can call `publish_static_site` to copy a workspace file or directory into `/workspace/public/{name}`. Published files are served by the app at `/public/{name}/...`.
 

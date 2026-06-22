@@ -28,6 +28,7 @@ from .discord_interactions import (
 from .heartbeat import HeartbeatRunner
 from .public_sites import list_public_sites
 from .schemas import ChatRequest, ChatResponse, CronEnableRequest, CronJobRequest
+from .self_improvement import format_webhook_message
 
 app = FastAPI(title="Pebble Shell", version=__version__)
 app.add_middleware(
@@ -312,6 +313,20 @@ async def webhook_trigger(
     return ChatResponse(content=response.content, steps=response.steps)
 
 
+@app.post("/webhooks/events/{event_id}/replay", response_model=ChatResponse)
+async def webhook_event_replay(event_id: int, request: Request, background_tasks: BackgroundTasks, background: bool = True) -> ChatResponse:
+    _require_api_auth(request)
+    agent = get_agent()
+    event = agent.self_improvement.get_webhook_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail=f"Unknown webhook event: {event_id}")
+    if background:
+        background_tasks.add_task(agent.replay_hook_event, event_id)
+        return ChatResponse(content=f"Webhook event `{event_id}` accepted for replay.", steps=0)
+    response = await agent.replay_hook_event(event_id)
+    return ChatResponse(content=response.content, steps=response.steps)
+
+
 async def _run_webhook_hook_recorded(name: str, payload: dict[str, Any], event_id: int) -> AgentResponse:
     agent = get_agent()
     agent.self_improvement.mark_webhook_event_processing(event_id)
@@ -329,11 +344,7 @@ async def _run_webhook_hook(name: str, payload: dict[str, Any]) -> AgentResponse
     hook = agent.self_improvement.get_hook(name)
     if not hook:
         raise ValueError(f"Unknown webhook hook: {name}")
-    content = (
-        f"Webhook hook `{name}` fired.\n\n"
-        f"Hook instructions:\n{hook['prompt']}\n\n"
-        f"Payload JSON:\n{payload}"
-    )
+    content = format_webhook_message(name, hook["prompt"], payload)
     return await agent.run_internal_event(content, f"webhook:{name}")
 
 

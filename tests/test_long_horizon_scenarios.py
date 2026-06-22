@@ -60,7 +60,7 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
     )
 
     assert tools.set_runtime_config("heartbeat_every_seconds", "3600").ok
-    assert tools.webhook_hook_save("email-alert", "Triage the incoming email payload.").ok
+    assert tools.hook_set("email-alert", "Triage the incoming email payload.").ok
     assert tools.cron_job_save("daily-check", "Review outstanding state.", 86_400).ok
     assert tools.write("context/MEMORY.md", "The recovery owner is platform-oncall.").ok
     assert "platform-oncall" in tools.read("context/MEMORY.md").output

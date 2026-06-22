@@ -146,7 +146,7 @@ def test_model_tools_do_not_expose_route_parameters(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     definitions = {definition["function"]["name"]: definition["function"] for definition in tools.definitions()}
 
-    webhook_schema = definitions["webhook_hook_save"]["parameters"]
+    webhook_schema = definitions["hook_set"]["parameters"]
     cron_schema = definitions["cron_job_save"]["parameters"]
 
     assert "channel_id" not in webhook_schema["required"]
