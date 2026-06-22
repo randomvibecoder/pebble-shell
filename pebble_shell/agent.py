@@ -51,7 +51,8 @@ Tool use:
 - Use publish_static_site for browser-testable static pages served from /public.
 - When working on a long task, use send_msg to update the user while you work. Send a small update when you start meaningful work, finish a major phase, hit a blocker, or begin verification. Each update should usually be one or two short sentences and ideally under 400 characters. Do not use send_msg for the final answer; the harness sends your final assistant response normally when the turn is done.
 - Use send_file after creating a user-requested downloadable artifact such as a PDF, report, image, or archive.
-- Use hook_set, hook_list, hook_show, hook_enable, hook_disable, hook_remove, hook_events, and hook_event_replay for event-backed HTTP webhook workflows such as suggestion boxes, fake email hooks, CI alerts, or local app callbacks. External callers POST JSON to /webhooks/{name}; browser forms should usually use /webhooks/{name}?background=true so the page gets an immediate acknowledgement while you process the event.
+- Use hook_set, hook_list, hook_show, hook_enable, hook_disable, hook_remove, hook_events, and hook_event_replay for event-backed HTTP webhook workflows such as suggestion boxes, fake email hooks, CI alerts, or local app callbacks. External callers POST JSON to /webhooks/{name} for synchronous request/response where the HTTP response is your final agent result. Browser forms should usually use /webhooks/{name}?background=true so the page gets an immediate acknowledgement while you process the event later.
+- Pebble's protected local HTTP routes use API_AUTH_TOKEN when configured. If you build a backend/server/script inside the container that needs to call Pebble's own protected HTTP API, make that program read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token and send Authorization: Bearer <token>. Do not copy the token into source code, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
 - Use cron_job_save for specific recurring automations; use heartbeat for broad periodic awareness.
 - Use set_runtime_config for user-requested model or heartbeat interval changes.
 - Durable self-memory lives in context/MEMORY.md. Use read, edit, write, or patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
@@ -131,6 +132,7 @@ Rules:
 - You have no heartbeat. Work until the assigned task is complete, blocked, paused, or canceled.
 - Edit only your assigned folder and /tmp unless the foreground prompt explicitly grants another path.
 - You have full shell control inside the Docker container, including container-local sudo/root capability. You may install packages, CLIs, browsers, dependencies, or other tools needed for your assigned work.
+- If your assigned work builds a backend/server/script that must call Pebble's protected local HTTP API, read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token and send Authorization: Bearer <token>. Do not copy the token into source code, browser JavaScript, logs, replies, or context files.
 - All relative file, search, bash, and exec_command paths operate from your assigned folder. For these tools, a leading / means /workspace, not container root.
 - For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
 - For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
@@ -172,6 +174,17 @@ class HeartbeatResponse:
     steps: int
 
 
+def ensure_api_auth_token_file(settings: Settings) -> None:
+    target = settings.api_auth_token_file or (settings.agent_workspace / ".pebble_shell" / "secrets" / "api_auth_token")
+    if settings.api_auth_token:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(settings.api_auth_token + "\n", encoding="utf-8")
+        target.chmod(0o600)
+        return
+    if target.exists():
+        target.unlink()
+
+
 class CodingAgent:
     def __init__(self, settings: Settings) -> None:
         if not settings.openai_api_key:
@@ -180,6 +193,7 @@ class CodingAgent:
         self.client = AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
         bundled_root = Path(__file__).resolve().parent.parent
         ensure_workspace_context_files(settings.agent_workspace, bundled_root)
+        ensure_api_auth_token_file(settings)
         self.runtime_config = RuntimeConfigStore(settings.runtime_config_db_path)
         self.self_improvement = SelfImprovementStore(settings.self_improvement_db_path)
         self.cron = CronStore(settings.cron_db_path)

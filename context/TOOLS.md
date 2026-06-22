@@ -31,10 +31,11 @@
 - Background workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`.
 - Background workers edit their assigned folder by default and do not have heartbeat behavior.
 - `set_runtime_config` persists safe runtime changes such as model and heartbeat interval.
-- `hook_set(name, prompt)` creates or updates an HTTP webhook hook. External callers POST JSON to `/webhooks/{name}`; browser forms should usually POST to `/webhooks/{name}?background=true`.
+- `hook_set(name, prompt)` creates or updates an HTTP webhook hook. External callers POST JSON to `/webhooks/{name}` for synchronous request/response: the HTTP response is Pebble's final agent result. Browser forms should usually POST to `/webhooks/{name}?background=true` for async acknowledgement while Pebble processes later.
 - `hook_list`, `hook_show`, `hook_enable`, `hook_disable`, and `hook_remove` inspect and manage registered hooks.
 - `hook_events(limit?)` inspects recent webhook receipts and processing status, useful for heartbeat checks on suggestion boxes and other event-backed workflows.
 - `hook_event_replay(event_id)` replays a prior webhook event by scheduling a new foreground agent run with the original hook payload.
+- Protected local HTTP routes require `Authorization: Bearer <token>` when API auth is enabled. If a backend/server/script you create inside the container must call Pebble's own protected HTTP API, read the token at runtime from `/workspace/.pebble_shell/secrets/api_auth_token`. Do not hardcode it into source, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
 - `self_improvements_list` shows recent self-improvements, hooks, and hook activity.
 - `cron_job_save` registers interval-based scheduled work with persisted results.
 - `cron_jobs_list` lists scheduled jobs and recent run results.

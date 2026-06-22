@@ -7,9 +7,8 @@ from typing import Any
 
 import pytest
 
-from pebble_shell.agent import CodingAgent
 from pebble_shell.agent import ImageInput
-from pebble_shell.agent import SYSTEM_PROMPT
+from pebble_shell.agent import SYSTEM_PROMPT, CodingAgent
 from pebble_shell.config import Settings
 
 
@@ -216,6 +215,55 @@ def test_system_prompt_defines_heartbeat() -> None:
     assert "first call read with path context/HEARTBEAT.md" in SYSTEM_PROMPT
     assert "HEARTBEAT_OK means there is no user-visible update" in SYSTEM_PROMPT
     assert "The harness suppresses HEARTBEAT_OK" in SYSTEM_PROMPT
+
+
+def test_system_prompt_documents_webhook_token_file() -> None:
+    assert "/workspace/.pebble_shell/secrets/api_auth_token" in SYSTEM_PROMPT
+    assert "read the bearer token at runtime" in SYSTEM_PROMPT
+    assert "Do not copy the token into source code" in SYSTEM_PROMPT
+
+
+def test_api_auth_token_file_is_seeded_from_settings(tmp_path: Path) -> None:
+    agent = CodingAgent(
+        Settings(
+            openai_api_key="test-key",
+            api_auth_token="secret-token",
+            agent_workspace=tmp_path / "workspace",
+            memory_db_path=tmp_path / "memory.sqlite3",
+            runtime_config_db_path=tmp_path / "runtime.sqlite3",
+            self_improvement_db_path=tmp_path / "self.sqlite3",
+            cron_db_path=tmp_path / "cron.sqlite3",
+            shell_audit_db_path=tmp_path / "exec.sqlite3",
+            background_tasks_db_path=tmp_path / "background.sqlite3",
+        )
+    )
+
+    token_path = agent.settings.agent_workspace / ".pebble_shell" / "secrets" / "api_auth_token"
+    assert token_path.read_text(encoding="utf-8") == "secret-token\n"
+    assert token_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_api_auth_token_file_is_removed_when_auth_disabled(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    token_path = workspace / ".pebble_shell" / "secrets" / "api_auth_token"
+    token_path.parent.mkdir(parents=True)
+    token_path.write_text("old-token\n", encoding="utf-8")
+
+    CodingAgent(
+        Settings(
+            openai_api_key="test-key",
+            api_auth_token="",
+            agent_workspace=workspace,
+            memory_db_path=tmp_path / "memory.sqlite3",
+            runtime_config_db_path=tmp_path / "runtime.sqlite3",
+            self_improvement_db_path=tmp_path / "self.sqlite3",
+            cron_db_path=tmp_path / "cron.sqlite3",
+            shell_audit_db_path=tmp_path / "exec.sqlite3",
+            background_tasks_db_path=tmp_path / "background.sqlite3",
+        )
+    )
+
+    assert not token_path.exists()
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     openai_flash_fallback_models: str = "claude-haiku-4-5-20251001"
     openai_model_input_token_limits: str = ""
     api_auth_token: str = Field(default="", repr=False)
+    api_auth_token_file: Path | None = None
     exa_api_key: str = Field(default="", repr=False)
     exa_base_url: str = "https://api.exa.ai"
 

@@ -91,6 +91,8 @@ Set `API_AUTH_TOKEN` before exposing local/admin routes. When set, these endpoin
 
 `GET /health` remains unauthenticated. `POST /discord/interactions` uses Discord Ed25519 request signatures instead of `API_AUTH_TOKEN`.
 
+When `API_AUTH_TOKEN` is configured, Pebble writes the token inside the container to `/workspace/.pebble_shell/secrets/api_auth_token` with `0600` permissions. Agent-built backend servers or scripts should read that file at runtime when they need to call Pebble's protected local HTTP API. Do not copy the token into source files, browser JavaScript, logs, replies, or context files.
+
 ## Safety Model
 
 The agent process and shell tools run inside the Docker container. File and shell tools are rooted at `AGENT_WORKSPACE` (`/workspace` in Docker). Shell commands have full control inside the container, including `sudo`; Docker isolation is the host boundary.
@@ -119,6 +121,8 @@ The agent can improve itself through bounded, auditable primitives:
 These mechanisms let the agent learn workflows and connect future events without silently rewriting arbitrary core code.
 
 Webhook triggers normally return the agent result. Browser forms can use `POST /webhooks/{name}?background=true` to receive an immediate acknowledgement while the agent handles the payload asynchronously. Every accepted webhook payload is recorded in the self-improvement ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt. Injected webhook turns include a UTC timestamp in the same `YYYY-MM-DD HH:MM:SS UTC` style as heartbeat turns.
+
+If a generated backend needs to call a protected webhook or `/chat`, have it read `/workspace/.pebble_shell/secrets/api_auth_token` at runtime and send `Authorization: Bearer <token>`. Do not put that token in client-side browser code.
 
 For browser-testable pages, the agent can call `publish_static_site` to copy a workspace file or directory into `/workspace/public/{name}`. Published files are served by the app at `/public/{name}/...`.
 

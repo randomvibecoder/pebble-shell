@@ -342,7 +342,11 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "hook_set",
-                    "description": "Create or update a named HTTP webhook hook. POST /webhooks/{name} triggers an agent run with this hook prompt and the JSON payload.",
+                    "description": (
+                        "Create or update a named HTTP webhook hook. POST /webhooks/{name} runs synchronously and returns "
+                        "the agent result; POST /webhooks/{name}?background=true acknowledges immediately and processes later. "
+                        "When API auth is enabled, backend code should read /workspace/.pebble_shell/secrets/api_auth_token at runtime."
+                    ),
                     "parameters": {
                         "type": "object",
                         "required": ["name", "prompt"],
@@ -971,7 +975,15 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Self-improvement store is not enabled")
         self.self_improvement.upsert_hook(name, prompt)
         self.self_improvement.record("hook", name, f"HTTP webhook hook {name}", {})
-        return ToolResult(ok=True, output=f"Saved hook {name}; trigger with POST /webhooks/{name}")
+        return ToolResult(
+            ok=True,
+            output=(
+                f"Saved hook {name}; POST /webhooks/{name} returns the agent result synchronously. "
+                f"Use POST /webhooks/{name}?background=true for async/browser form submissions. "
+                "If API auth is enabled, backend callers should read the bearer token at runtime from "
+                "/workspace/.pebble_shell/secrets/api_auth_token."
+            ),
+        )
 
     def hook_list(self) -> ToolResult:
         if not self.self_improvement:
