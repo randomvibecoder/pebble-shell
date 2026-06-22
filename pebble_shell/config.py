@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     openai_base_url: str = "https://nano-gpt.com/api/v1"
     openai_api_key: str = Field(default="", repr=False)
-    openai_model: str = "xiaomi/mimo-v2.5-pro:thinking"
+    openai_model: str = "xiaomi/mimo-v2.5:thinking"
     openai_fallback_models: str = "claude-haiku-4-5-20251001"
     openai_flash_model: str = "xiaomi/mimo-v2.5:thinking"
     openai_flash_fallback_models: str = "claude-haiku-4-5-20251001"

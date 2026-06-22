@@ -334,7 +334,7 @@ async def test_image_inputs_are_sent_as_multimodal_content_and_stored_as_referen
     )
 
     user_message = next(message for message in fake_client.chat.completions.calls[0]["messages"] if message["role"] == "user")
-    assert fake_client.chat.completions.calls[0]["model"] == "xiaomi/mimo-v2.5-pro:thinking"
+    assert fake_client.chat.completions.calls[0]["model"] == "xiaomi/mimo-v2.5:thinking"
     assert user_message["role"] == "user"
     assert user_message["content"][0]["type"] == "text"
     assert user_message["content"][1] == {
