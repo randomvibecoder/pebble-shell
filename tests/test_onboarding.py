@@ -223,6 +223,12 @@ def test_system_prompt_documents_webhook_token_file() -> None:
     assert "Do not copy the token into source code" in SYSTEM_PROMPT
 
 
+def test_system_prompt_documents_webhook_context_and_send_msg() -> None:
+    assert "Webhook turns are normal foreground turns in this same single linear chat" in SYSTEM_PROMPT
+    assert "A webhook does not create a separate conversation" in SYSTEM_PROMPT
+    assert "You may use send_msg during webhook work" in SYSTEM_PROMPT
+
+
 def test_api_auth_token_file_is_seeded_from_settings(tmp_path: Path) -> None:
     agent = CodingAgent(
         Settings(

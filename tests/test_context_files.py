@@ -34,6 +34,13 @@ def test_context_loader_caches_until_refresh(tmp_path: Path) -> None:
     assert any(message["content"] == "context/TOOLS.md:\nnew tools" for message in loader.load())
 
 
+def test_bundled_tools_document_webhook_context_and_send_msg() -> None:
+    tools_text = Path("context/TOOLS.md").read_text(encoding="utf-8")
+
+    assert "Webhook events are normal foreground turns in the same single linear chat" in tools_text
+    assert "`send_msg` is available during webhook work" in tools_text
+
+
 def test_workspace_context_files_are_seeded_from_bundled_defaults(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     bundled = tmp_path / "bundled"

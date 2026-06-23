@@ -35,6 +35,7 @@
 - `hook_list`, `hook_show`, `hook_enable`, `hook_disable`, and `hook_remove` inspect and manage registered hooks.
 - `hook_events(limit?)` inspects recent webhook receipts and processing status, useful for heartbeat checks on suggestion boxes and other event-backed workflows.
 - `hook_event_replay(event_id)` replays a prior webhook event by scheduling a new foreground agent run with the original hook payload.
+- Webhook events are normal foreground turns in the same single linear chat as direct user messages, heartbeats, and cron turns. They do not create a separate conversation. Webhook messages, tool calls/results, `send_msg` updates, and final answers are appended to the same conversation history, subject only to normal compaction. `send_msg` is available during webhook work when a short user-visible progress update is useful; the final HTTP response still comes from the normal final assistant answer.
 - Protected local HTTP routes require `Authorization: Bearer <token>` when API auth is enabled. If a backend/server/script you create inside the container must call Pebble's own protected HTTP API, read the token at runtime from `/workspace/.pebble_shell/secrets/api_auth_token`. Do not hardcode it into source, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
 - `self_improvements_list` shows recent self-improvements, hooks, and hook activity.
 - `cron_job_save` registers interval-based scheduled work with persisted results.
