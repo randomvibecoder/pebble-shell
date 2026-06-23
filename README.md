@@ -2,9 +2,8 @@
 
 A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It exposes:
 
-- `POST /chat` for direct testing.
 - `POST /discord/interactions` for signed Discord HTTP interactions.
-- `POST /webhooks/{name}` for agent-created external hooks.
+- `POST /webhooks/{name}` for local-only agent-created event hooks.
 - `GET /public/{path}` for published static files from `/workspace/public`.
 - `GET/POST /cron/jobs` plus `POST /cron/jobs/{name}/run` for scheduled automation.
 - `GET /status` for an authenticated runtime snapshot, including active terminal sessions.
@@ -25,14 +24,6 @@ Run in Docker:
 
 ```bash
 docker compose up --build
-```
-
-Send a transport-neutral chat message:
-
-```bash
-curl -s http://localhost:8080/chat \
-  -H 'content-type: application/json' \
-  -d '{"content": "List the files in your workspace."}' | jq
 ```
 
 ## Discord Notes
@@ -84,7 +75,6 @@ Set `DISCORD_ALLOWED_USER_ID` to the single Discord user ID Pebble Shell should 
 
 Set `API_AUTH_TOKEN` before exposing local/admin routes. When set, these endpoints require `Authorization: Bearer <token>`:
 
-- `POST /chat`
 - `POST /webhooks/{name}`
 - `GET /status`
 - Cron and heartbeat control endpoints
@@ -120,9 +110,9 @@ The agent can improve itself through bounded, auditable primitives:
 
 These mechanisms let the agent learn workflows and connect future events without silently rewriting arbitrary core code.
 
-Webhook triggers normally return the agent result. Browser forms can use `POST /webhooks/{name}?background=true` to receive an immediate acknowledgement while the agent handles the payload asynchronously. Every accepted webhook payload is recorded in the self-improvement ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt. Injected webhook turns include a UTC timestamp in the same `YYYY-MM-DD HH:MM:SS UTC` style as heartbeat turns.
+Webhook triggers are local-only event ingress. `POST /webhooks/{name}` records an event, returns an event id/status immediately, and never returns the agent's final answer. Every accepted webhook payload is recorded in the self-improvement ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt. Injected webhook turns include a UTC timestamp in the same `YYYY-MM-DD HH:MM:SS UTC` style as heartbeat turns.
 
-If a generated backend needs to call a protected webhook or `/chat`, have it read `/workspace/.pebble_shell/secrets/api_auth_token` at runtime and send `Authorization: Bearer <token>`. Do not put that token in client-side browser code.
+For external apps, websites, CLIs, or APIs, have Pebble build an adapter server/script/daemon. The adapter receives the external request, calls Pebble's localhost webhook from inside the container, and exposes an adapter-specific response path such as `send.sh`, `reply_ticket.py`, `send_email.py`, or a local HTTP endpoint. If a generated backend needs to call a protected webhook, have it read `/workspace/.pebble_shell/secrets/api_auth_token` at runtime and send `Authorization: Bearer <token>`. Do not put that token in client-side browser code.
 
 For browser-testable pages, the agent can call `publish_static_site` to copy a workspace file or directory into `/workspace/public/{name}`. Published files are served by the app at `/public/{name}/...`.
 

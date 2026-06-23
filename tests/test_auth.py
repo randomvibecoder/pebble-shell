@@ -22,15 +22,6 @@ class FakeAgent:
 
 
 @dataclass
-class FailingAgent:
-    calls: int = 0
-
-    async def run_user_message(self, content: str, images: list[object] | None = None) -> AgentResponse:
-        self.calls += 1
-        raise RuntimeError("provider unavailable")
-
-
-@dataclass
 class FakeRuntimeConfig:
     def all(self) -> dict[str, str]:
         return {"openai_model": "runtime/model", "heartbeat_every_seconds": "3600"}
@@ -87,46 +78,27 @@ class FakeStatusAgent:
         return ["flash/model", "flash/fallback"]
 
 
-def test_auth_token_blocks_chat_before_agent(monkeypatch) -> None:
+def test_chat_endpoint_is_not_exposed(monkeypatch) -> None:
+    fake = FakeAgent()
+    monkeypatch.setattr(server, "get_agent", lambda: fake)
+
+    response = TestClient(app).post("/chat", json={"content": "hello"})
+
+    assert response.status_code == 404
+    assert fake.calls == 0
+
+
+def test_auth_token_blocks_webhook_before_agent(monkeypatch) -> None:
     monkeypatch.setenv("API_AUTH_TOKEN", "secret-token")
     get_settings.cache_clear()
     fake = FakeAgent()
     monkeypatch.setattr(server, "get_agent", lambda: fake)
 
-    response = TestClient(app).post("/chat", json={"content": "hello"})
+    response = TestClient(app).post("/webhooks/test", json={"content": "hello"})
 
     assert response.status_code == 401
     assert fake.calls == 0
     get_settings.cache_clear()
-
-
-def test_auth_token_allows_chat_with_bearer(monkeypatch) -> None:
-    monkeypatch.setenv("API_AUTH_TOKEN", "secret-token")
-    get_settings.cache_clear()
-    fake = FakeAgent()
-    monkeypatch.setattr(server, "get_agent", lambda: fake)
-
-    response = TestClient(app).post(
-        "/chat",
-        json={"content": "hello"},
-        headers={"authorization": "Bearer secret-token"},
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"content": "ok:hello:primary", "steps": 1}
-    assert fake.calls == 1
-    get_settings.cache_clear()
-
-
-def test_chat_returns_controlled_error_when_agent_fails(monkeypatch) -> None:
-    fake = FailingAgent()
-    monkeypatch.setattr(server, "get_agent", lambda: fake)
-
-    response = TestClient(app).post("/chat", json={"content": "hello"})
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == "provider unavailable"
-    assert fake.calls == 1
 
 
 def test_health_does_not_require_auth(monkeypatch) -> None:

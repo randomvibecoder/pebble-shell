@@ -27,7 +27,7 @@ from .discord_interactions import (
 )
 from .heartbeat import HeartbeatRunner
 from .public_sites import list_public_sites
-from .schemas import ChatRequest, ChatResponse, CronEnableRequest, CronJobRequest
+from .schemas import ChatResponse, CronEnableRequest, CronJobRequest, WebhookAcceptedResponse
 from .self_improvement import format_webhook_message
 
 app = FastAPI(title="Pebble Shell", version=__version__)
@@ -133,12 +133,6 @@ async def status(request: Request) -> dict[str, Any]:
             "recent_improvements": recent_improvements,
         },
     }
-
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
-    _require_api_auth(request)
-    return await _run_user_message_or_500(chat_request.content)
 
 
 @app.post("/discord/interactions")
@@ -289,14 +283,14 @@ async def cron_job_run(name: str, request: Request) -> ChatResponse:
     return ChatResponse(content=content, steps=0)
 
 
-@app.post("/webhooks/{name}", response_model=ChatResponse)
+@app.post("/webhooks/{name}", response_model=WebhookAcceptedResponse)
 async def webhook_trigger(
     name: str,
     payload: dict[str, Any],
     request: Request,
     background_tasks: BackgroundTasks,
-    background: bool = False,
-) -> ChatResponse:
+) -> WebhookAcceptedResponse:
+    _require_local_webhook_request(request)
     _require_api_auth(request)
     agent = get_agent()
     hook = agent.self_improvement.get_hook(name)
@@ -304,27 +298,29 @@ async def webhook_trigger(
         raise HTTPException(status_code=404, detail=f"Unknown webhook hook: {name}")
     if not hook["enabled"]:
         raise HTTPException(status_code=409, detail=f"Webhook hook is disabled: {name}")
-    event_id = agent.self_improvement.record_webhook_event(name, payload, background)
-    if background:
-        background_tasks.add_task(_run_webhook_hook_recorded, name, payload, event_id)
-        return ChatResponse(content=f"Webhook hook `{name}` accepted for background processing.", steps=0)
+    event_id = agent.self_improvement.record_webhook_event(name, payload, True)
+    background_tasks.add_task(_run_webhook_hook_recorded, name, payload, event_id)
+    return WebhookAcceptedResponse(
+        event_id=event_id,
+        status="received",
+        content=f"Webhook hook `{name}` accepted for event processing.",
+    )
 
-    response = await _run_webhook_hook_recorded(name, payload, event_id)
-    return ChatResponse(content=response.content, steps=response.steps)
 
-
-@app.post("/webhooks/events/{event_id}/replay", response_model=ChatResponse)
-async def webhook_event_replay(event_id: int, request: Request, background_tasks: BackgroundTasks, background: bool = True) -> ChatResponse:
+@app.post("/webhooks/events/{event_id}/replay", response_model=WebhookAcceptedResponse)
+async def webhook_event_replay(event_id: int, request: Request, background_tasks: BackgroundTasks) -> WebhookAcceptedResponse:
+    _require_local_webhook_request(request)
     _require_api_auth(request)
     agent = get_agent()
     event = agent.self_improvement.get_webhook_event(event_id)
     if not event:
         raise HTTPException(status_code=404, detail=f"Unknown webhook event: {event_id}")
-    if background:
-        background_tasks.add_task(agent.replay_hook_event, event_id)
-        return ChatResponse(content=f"Webhook event `{event_id}` accepted for replay.", steps=0)
-    response = await agent.replay_hook_event(event_id)
-    return ChatResponse(content=response.content, steps=response.steps)
+    background_tasks.add_task(agent.replay_hook_event, event_id)
+    return WebhookAcceptedResponse(
+        event_id=event_id,
+        status="received",
+        content=f"Webhook event `{event_id}` accepted for replay.",
+    )
 
 
 async def _run_webhook_hook_recorded(name: str, payload: dict[str, Any], event_id: int) -> AgentResponse:
@@ -356,6 +352,12 @@ def _require_api_auth(request: Request) -> None:
     expected = f"Bearer {token}"
     if not secrets.compare_digest(header, expected):
         raise HTTPException(status_code=401, detail="invalid or missing API auth token")
+
+
+def _require_local_webhook_request(request: Request) -> None:
+    host = request.client.host if request.client else ""
+    if host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        raise HTTPException(status_code=403, detail="webhooks are local-only event ingress")
 
 
 def _require_allowed_discord_user(user_id: str) -> None:

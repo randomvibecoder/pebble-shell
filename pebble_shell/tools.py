@@ -343,8 +343,8 @@ class WorkspaceTools:
                 "function": {
                     "name": "hook_set",
                     "description": (
-                        "Create or update a named HTTP webhook hook. POST /webhooks/{name} runs synchronously and returns "
-                        "the agent result; POST /webhooks/{name}?background=true acknowledges immediately and processes later. "
+                        "Create or update a named internal localhost event hook. POST /webhooks/{name} records an event "
+                        "and returns an event id/status immediately; it does not return the agent result. "
                         "When API auth is enabled, backend code should read /workspace/.pebble_shell/secrets/api_auth_token at runtime."
                     ),
                     "parameters": {
@@ -978,8 +978,8 @@ class WorkspaceTools:
         return ToolResult(
             ok=True,
             output=(
-                f"Saved hook {name}; POST /webhooks/{name} returns the agent result synchronously. "
-                f"Use POST /webhooks/{name}?background=true for async/browser form submissions. "
+                f"Saved hook {name}; POST /webhooks/{name} records a local event and returns an event id/status immediately. "
+                "It does not return the agent result. Use an adapter-specific CLI/API for replies to external systems. "
                 "If API auth is enabled, backend callers should read the bearer token at runtime from "
                 "/workspace/.pebble_shell/secrets/api_auth_token."
             ),

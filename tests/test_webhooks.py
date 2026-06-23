@@ -60,7 +60,11 @@ def test_webhook_trigger_routes_fake_email_environment(tmp_path: Path, monkeypat
     )
 
     assert response.status_code == 200
-    assert response.json() == {"content": "handled webhook:email-alert", "steps": 1}
+    body = response.json()
+    assert body["content"] == "Webhook hook `email-alert` accepted for event processing."
+    assert body["status"] == "received"
+    assert body["event_id"] == 1
+    assert body["steps"] == 0
     content, source = fake.calls[0]
     assert source == "webhook:email-alert"
     assert "This is a webhook turn. The time is " in content
@@ -100,22 +104,23 @@ def test_webhook_trigger_routes_fake_ci_environment(tmp_path: Path, monkeypatch)
     assert "failed_step" in content
 
 
-def test_webhook_background_mode_acknowledges_immediately(tmp_path: Path, monkeypatch) -> None:
+def test_webhook_trigger_acknowledges_event_immediately(tmp_path: Path, monkeypatch) -> None:
     store = SelfImprovementStore(tmp_path / "self.sqlite3")
     store.upsert_hook("suggestion-box", "Summarize suggestions.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
 
     response = TestClient(app).post(
-        "/webhooks/suggestion-box?background=true",
+        "/webhooks/suggestion-box",
         json={"name": "Tester", "suggestion": "Add keyboard shortcuts."},
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "content": "Webhook hook `suggestion-box` accepted for background processing.",
-        "steps": 0,
-    }
+    body = response.json()
+    assert body["content"] == "Webhook hook `suggestion-box` accepted for event processing."
+    assert body["status"] == "received"
+    assert body["event_id"] == 1
+    assert body["steps"] == 0
     assert fake.calls[0][1] == "webhook:suggestion-box"
     event = store.list_webhook_events()[0]
     assert event["name"] == "suggestion-box"
@@ -132,10 +137,14 @@ def test_webhook_event_replay_routes_original_payload(tmp_path: Path, monkeypatc
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
 
-    response = TestClient(app).post(f"/webhooks/events/{event_id}/replay?background=false")
+    response = TestClient(app).post(f"/webhooks/events/{event_id}/replay")
 
     assert response.status_code == 200
-    assert response.json() == {"content": "handled webhook:suggestion-box:replay", "steps": 1}
+    body = response.json()
+    assert body["content"] == f"Webhook event `{event_id}` accepted for replay."
+    assert body["status"] == "received"
+    assert body["event_id"] == event_id
+    assert body["steps"] == 0
     content, source = fake.calls[0]
     assert source == "webhook:suggestion-box:replay"
     assert "This is a webhook turn. The time is " in content
@@ -153,7 +162,7 @@ def test_webhook_event_records_failures(tmp_path: Path, monkeypatch) -> None:
 
     response = TestClient(app, raise_server_exceptions=False).post("/webhooks/failing-hook", json={"event": "boom"})
 
-    assert response.status_code == 500
+    assert response.status_code == 200
     event = store.list_webhook_events()[0]
     assert event["name"] == "failing-hook"
     assert event["status"] == "failed"
@@ -172,6 +181,22 @@ def test_webhook_trigger_rejects_disabled_hook(tmp_path: Path, monkeypatch) -> N
     response = TestClient(app).post("/webhooks/disabled-hook", json={"environment": "test"})
 
     assert response.status_code == 409
+    assert fake.calls == []
+
+
+def test_webhook_trigger_rejects_non_local_callers(tmp_path: Path, monkeypatch) -> None:
+    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store.upsert_hook("local-only", "Handle local events.")
+    fake = FakeWebhookAgent(store, [])
+    monkeypatch.setattr(server, "get_agent", lambda: fake)
+
+    response = TestClient(app, client=("203.0.113.10", 12345)).post(
+        "/webhooks/local-only",
+        json={"environment": "test"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webhooks are local-only event ingress"
     assert fake.calls == []
 
 

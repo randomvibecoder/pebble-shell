@@ -1,13 +1,18 @@
 from fastapi.testclient import TestClient
 
-from pebble_shell.schemas import ChatRequest
+from pebble_shell.schemas import WebhookAcceptedResponse
 from pebble_shell.server import app, get_agent, get_settings, set_agent
 
 
-def test_chat_request_is_transport_neutral() -> None:
-    payload = ChatRequest.model_validate({"content": "hello"})
+def test_webhook_ack_response_includes_event_status() -> None:
+    payload = WebhookAcceptedResponse.model_validate(
+        {"event_id": 7, "status": "received", "content": "accepted"}
+    )
 
-    assert payload.content == "hello"
+    assert payload.event_id == 7
+    assert payload.status == "received"
+    assert payload.content == "accepted"
+    assert payload.steps == 0
 
 
 def test_public_route_serves_workspace_public_files(tmp_path, monkeypatch) -> None:

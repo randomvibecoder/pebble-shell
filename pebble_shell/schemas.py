@@ -3,13 +3,16 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
-class ChatRequest(BaseModel):
-    content: str
-
-
 class ChatResponse(BaseModel):
     content: str
     steps: int
+
+
+class WebhookAcceptedResponse(BaseModel):
+    event_id: int
+    status: str
+    content: str
+    steps: int = 0
 
 
 class CronJobRequest(BaseModel):

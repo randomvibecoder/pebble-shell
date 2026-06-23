@@ -37,7 +37,8 @@ def test_context_loader_caches_until_refresh(tmp_path: Path) -> None:
 def test_bundled_tools_document_webhook_context_and_send_msg() -> None:
     tools_text = Path("context/TOOLS.md").read_text(encoding="utf-8")
 
-    assert "Webhook events are normal foreground turns in the same single linear chat" in tools_text
+    assert "records an event and returns immediately with event id/status" in tools_text
+    assert "local input events only, not chat/completion APIs" in tools_text
     assert "`send_msg` is available during webhook work" in tools_text
 
 
