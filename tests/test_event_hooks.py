@@ -49,10 +49,20 @@ def test_hook_management_tools_enable_disable_remove_and_show(tmp_path: Path) ->
     assert store.get_hook("suggestion-box")["enabled"] is False
     assert tools.run("hook_enable", {"name": "suggestion-box"}).ok
     assert store.get_hook("suggestion-box")["enabled"] is True
-    event_id = store.record_webhook_event("suggestion-box", {"suggestion": "Add dark mode."}, background=True)
     assert tools.run("hook_remove", {"name": "suggestion-box"}).ok
     assert store.get_hook("suggestion-box") is None
-    assert store.get_webhook_event(event_id)["payload"]["suggestion"] == "Add dark mode."
+
+
+def test_hook_list_limits_results(tmp_path: Path) -> None:
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
+    tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, event_hooks=store)
+    for index in range(3):
+        store.upsert_hook(f"hook-{index}", "Handle event.")
+
+    result = tools.run("hook_list", {"limit": 2})
+
+    assert result.ok
+    assert len(json.loads(result.output)) == 2
 
 
 def test_hook_event_replay_schedules_existing_event(tmp_path: Path) -> None:

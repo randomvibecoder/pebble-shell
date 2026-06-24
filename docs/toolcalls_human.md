@@ -27,9 +27,9 @@ Paths are workspace-scoped. For foreground tools, relative paths resolve from th
 
 ## File And Search Tools
 
-### `ls(path: str = ".")`
+### `ls(path: str = ".", limit: int = 200)`
 
-Lists a file or directory.
+Lists a file or directory. `limit` is clamped to `1..1000`.
 
 Success for a file:
 
@@ -41,6 +41,12 @@ Success for a directory:
 
 ```json
 {"ok": true, "output": "dir/file.txt\ndir/subdir/"}
+```
+
+Success for a truncated directory:
+
+```json
+{"ok": true, "output": "dir/file-1.txt\ndir/file-2.txt\n[ls truncated at 2 entries]"}
 ```
 
 Success for an empty directory:
@@ -301,9 +307,9 @@ Failures:
 {"ok": false, "output": "Session <id> does not accept stdin"}
 ```
 
-### `shell_audit_recent()`
+### `shell_audit(limit: int = 20)`
 
-Lists recent shell audit records.
+Lists recent shell audit records. `limit` is clamped to `1..50`.
 
 Success output is a JSON array:
 
@@ -461,9 +467,9 @@ Failures:
 {"ok": false, "output": "hook prompt cannot be empty"}
 ```
 
-### `hook_list()`
+### `hook_list(limit: int = 20)`
 
-Lists registered hooks.
+Lists registered hooks. `limit` is clamped to `1..50`.
 
 Success output is a JSON array:
 
@@ -610,9 +616,9 @@ Failures:
 {"ok": false, "output": "cron prompt cannot be empty"}
 ```
 
-### `cron_jobs_list()`
+### `cron_list(jobs_limit: int = 20, runs_limit: int = 20)`
 
-Lists scheduled jobs and recent runs.
+Lists scheduled jobs and recent runs. `jobs_limit` and `runs_limit` are clamped to `1..50`.
 
 Success output is a JSON object:
 
@@ -647,7 +653,7 @@ Failure:
 {"ok": false, "output": "Cron store is not enabled"}
 ```
 
-### `cron_job_set_enabled(name: str, enabled: bool)`
+### `cron_enable(name: str, enabled: bool)`
 
 Pauses or resumes a scheduled job.
 

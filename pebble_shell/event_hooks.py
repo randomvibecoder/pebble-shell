@@ -68,10 +68,12 @@ class EventHookStore:
             return None
         return {"name": row[0], "prompt": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
 
-    def list_hooks(self) -> list[dict[str, Any]]:
+    def list_hooks(self, limit: int = 20) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 50))
         with self._connect() as conn:
             rows = conn.execute(
-                "select name, prompt, enabled, updated_at from webhook_hooks order by name",
+                "select name, prompt, enabled, updated_at from webhook_hooks order by name limit ?",
+                (limit,),
             ).fetchall()
         return [
             {"name": row[0], "prompt": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
@@ -228,4 +230,3 @@ def _webhook_event_row(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
         "created_at": row[7],
         "processed_at": row[8],
     }
-

@@ -84,14 +84,17 @@ class CronStore:
             ).fetchall()
         return [_row_to_job(row) for row in rows]
 
-    def list_jobs(self) -> list[dict[str, Any]]:
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 50))
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 select name, prompt, every_seconds, enabled, last_run_at, next_run_at, updated_at
                 from cron_jobs
                 order by name
-                """
+                limit ?
+                """,
+                (limit,),
             ).fetchall()
         return [
             {
@@ -124,6 +127,7 @@ class CronStore:
             )
 
     def list_runs(self, job_name: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 50))
         query = "select job_name, ok, steps, content, created_at from cron_runs"
         params: list[Any] = []
         if job_name:
@@ -221,5 +225,5 @@ def _validate_name(name: str) -> None:
         raise ValueError("name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens")
 
 
-def dumps_cron_state(store: CronStore) -> str:
-    return json.dumps({"jobs": store.list_jobs(), "runs": store.list_runs()}, sort_keys=True)
+def dumps_cron_state(store: CronStore, jobs_limit: int = 20, runs_limit: int = 20) -> str:
+    return json.dumps({"jobs": store.list_jobs(jobs_limit), "runs": store.list_runs(limit=runs_limit)}, sort_keys=True)

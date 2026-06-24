@@ -128,6 +128,33 @@ def test_file_edit_tools_are_exposed(tmp_path: Path) -> None:
     assert "patch" in names
 
 
+def test_ls_limits_directory_output(tmp_path: Path) -> None:
+    for index in range(5):
+        (tmp_path / f"file-{index}.txt").write_text(str(index), encoding="utf-8")
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+
+    result = tools.run("ls", {"limit": 3})
+
+    assert result.ok
+    assert len(result.output.splitlines()) == 4
+    assert "[ls truncated at 3 entries]" in result.output
+
+
+def test_list_tools_have_limits_and_short_names(tmp_path: Path) -> None:
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+    definitions = {definition["function"]["name"]: definition["function"] for definition in tools.definitions()}
+
+    assert "limit" in definitions["ls"]["parameters"]["properties"]
+    assert "limit" in definitions["hook_list"]["parameters"]["properties"]
+    assert "jobs_limit" in definitions["cron_list"]["parameters"]["properties"]
+    assert "runs_limit" in definitions["cron_list"]["parameters"]["properties"]
+    assert "limit" in definitions["shell_audit"]["parameters"]["properties"]
+
+    assert "cron_jobs_list" not in definitions
+    assert "cron_job_set_enabled" not in definitions
+    assert "shell_audit_recent" not in definitions
+
+
 def test_send_msg_is_foreground_only_tool_definition(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     worker_tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, text_sender=lambda text: "sent")

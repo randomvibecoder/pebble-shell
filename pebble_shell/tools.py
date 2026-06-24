@@ -73,7 +73,7 @@ class WorkspaceTools:
         self.runtime_config = runtime_config
         self.event_hooks = event_hooks
         self.cron = cron
-        self.shell_audit = shell_audit
+        self.shell_audit_store = shell_audit
         self.memory = memory
         self.processes = BackgroundProcessManager(self.root, self.cwd)
         self.exa = ExaSearchClient(exa_api_key, exa_base_url)
@@ -99,7 +99,8 @@ class WorkspaceTools:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string", "description": "Directory or file path."}
+                            "path": {"type": "string", "description": "Directory or file path."},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
                         },
                     },
                 },
@@ -337,7 +338,12 @@ class WorkspaceTools:
                 "function": {
                     "name": "hook_list",
                     "description": "List registered HTTP webhook hooks and whether each hook is enabled.",
-                    "parameters": {"type": "object", "properties": {}},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        },
+                    },
                 },
             },
             {
@@ -435,15 +441,21 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "cron_jobs_list",
+                    "name": "cron_list",
                     "description": "List scheduled jobs and recent run results.",
-                    "parameters": {"type": "object", "properties": {}},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "jobs_limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                            "runs_limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        },
+                    },
                 },
             },
             {
                 "type": "function",
                 "function": {
-                    "name": "cron_job_set_enabled",
+                    "name": "cron_enable",
                     "description": "Pause or resume a scheduled job.",
                     "parameters": {
                         "type": "object",
@@ -458,9 +470,14 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "shell_audit_recent",
+                    "name": "shell_audit",
                     "description": "List recent shell command audit records.",
-                    "parameters": {"type": "object", "properties": {}},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        },
+                    },
                 },
             },
         ]
@@ -480,7 +497,7 @@ class WorkspaceTools:
 
         try:
             if name == "ls":
-                return self.ls(arguments.get("path", "."))
+                return self.ls(arguments.get("path", "."), int(arguments.get("limit", 200)))
             if name == "glob":
                 return self.glob(arguments["pattern"], arguments.get("path", "."), int(arguments.get("max_results", 100)))
             if name == "grep":
@@ -527,7 +544,7 @@ class WorkspaceTools:
             if name == "hook_set":
                 return self.hook_set(arguments["name"], arguments["prompt"])
             if name == "hook_list":
-                return self.hook_list()
+                return self.hook_list(int(arguments.get("limit", 20)))
             if name == "hook_show":
                 return self.hook_show(arguments["name"])
             if name == "hook_enable":
@@ -547,12 +564,12 @@ class WorkspaceTools:
                     int(arguments["every_seconds"]),
                     arguments.get("enabled", True),
                 )
-            if name == "cron_jobs_list":
-                return self.cron_jobs_list()
-            if name == "cron_job_set_enabled":
-                return self.cron_job_set_enabled(arguments["name"], bool(arguments["enabled"]))
-            if name == "shell_audit_recent":
-                return self.shell_audit_recent()
+            if name == "cron_list":
+                return self.cron_list(int(arguments.get("jobs_limit", 20)), int(arguments.get("runs_limit", 20)))
+            if name == "cron_enable":
+                return self.cron_enable(arguments["name"], bool(arguments["enabled"]))
+            if name == "shell_audit":
+                return self.shell_audit(int(arguments.get("limit", 20)))
             if name == "subagent_start":
                 return self.subagent_start(arguments["prompt"], arguments["folder"])
             if name == "subagent_status":
@@ -582,20 +599,27 @@ class WorkspaceTools:
 
         return ToolResult(ok=False, output=f"Unknown tool: {name}")
 
-    def ls(self, path: str = ".") -> ToolResult:
+    def ls(self, path: str = ".", limit: int = 200) -> ToolResult:
         try:
             target = self._resolve(path)
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
+        limit = max(1, min(int(limit), 1000))
         if not target.exists():
             return ToolResult(ok=False, output=f"No such path: {path}")
         if target.is_file():
             return ToolResult(ok=True, output=target.relative_to(self.root).as_posix())
 
         entries = []
+        truncated = False
         for child in sorted(target.iterdir(), key=lambda item: item.name):
+            if len(entries) >= limit:
+                truncated = True
+                break
             suffix = "/" if child.is_dir() else ""
             entries.append(f"{child.relative_to(self.root).as_posix()}{suffix}")
+        if truncated:
+            return ToolResult(ok=True, output="\n".join(entries) + f"\n[ls truncated at {limit} entries]")
         return ToolResult(ok=True, output="\n".join(entries) or "(empty)")
 
     def read(self, path: str) -> ToolResult:
@@ -797,8 +821,8 @@ class WorkspaceTools:
                 + f"\n[bash output truncated at {BASH_OUTPUT_LIMIT_CHARS} chars. "
                 + f"Full stdout/stderr saved at {full_path}; use bash commands such as sed, rg, head, tail, wc, or cat on that file to inspect specific parts.]"
             )
-        if self.shell_audit:
-            self.shell_audit.record(command, completed.returncode == 0, "normal", "Allowed inside Docker container", completed.returncode, output)
+        if self.shell_audit_store:
+            self.shell_audit_store.record(command, completed.returncode == 0, "normal", "Allowed inside Docker container", completed.returncode, output)
         return ToolResult(ok=completed.returncode == 0, output=output or f"exit code {completed.returncode}")
 
     def exec_command(
@@ -821,8 +845,8 @@ class WorkspaceTools:
         except ValueError as exc:
             return ToolResult(ok=False, output=str(exc))
         status = self.processes.exec_command(cmd, yield_time_ms, max_output_tokens, tty, resolved_workdir, shell, login)
-        if self.shell_audit:
-            self.shell_audit.record(cmd, True, "normal", "Started terminal command", None, json.dumps(status, sort_keys=True))
+        if self.shell_audit_store:
+            self.shell_audit_store.record(cmd, True, "normal", "Started terminal command", None, json.dumps(status, sort_keys=True))
         return ToolResult(ok=True, output=json.dumps(status, sort_keys=True))
 
     def write_stdin(self, session_id: int, chars: str = "", yield_time_ms: int = 10000, max_output_tokens: int = 20000) -> ToolResult:
@@ -907,10 +931,10 @@ class WorkspaceTools:
             ),
         )
 
-    def hook_list(self) -> ToolResult:
+    def hook_list(self, limit: int = 20) -> ToolResult:
         if not self.event_hooks:
             return ToolResult(ok=False, output="Event hook store is not enabled")
-        return ToolResult(ok=True, output=json.dumps(self.event_hooks.list_hooks(), sort_keys=True))
+        return ToolResult(ok=True, output=json.dumps(self.event_hooks.list_hooks(limit), sort_keys=True))
 
     def hook_show(self, name: str) -> ToolResult:
         if not self.event_hooks:
@@ -959,21 +983,21 @@ class WorkspaceTools:
         self.cron.upsert_job(name, prompt, int(every_seconds), enabled=bool(enabled))
         return ToolResult(ok=True, output=f"Saved cron job {name} every {every_seconds} seconds")
 
-    def cron_jobs_list(self) -> ToolResult:
+    def cron_list(self, jobs_limit: int = 20, runs_limit: int = 20) -> ToolResult:
         if not self.cron:
             return ToolResult(ok=False, output="Cron store is not enabled")
-        return ToolResult(ok=True, output=dumps_cron_state(self.cron))
+        return ToolResult(ok=True, output=dumps_cron_state(self.cron, jobs_limit, runs_limit))
 
-    def cron_job_set_enabled(self, name: str, enabled: bool) -> ToolResult:
+    def cron_enable(self, name: str, enabled: bool) -> ToolResult:
         if not self.cron:
             return ToolResult(ok=False, output="Cron store is not enabled")
         self.cron.set_enabled(name, enabled)
         return ToolResult(ok=True, output=f"Set cron job {name} enabled={enabled}")
 
-    def shell_audit_recent(self) -> ToolResult:
-        if not self.shell_audit:
+    def shell_audit(self, limit: int = 20) -> ToolResult:
+        if not self.shell_audit_store:
             return ToolResult(ok=False, output="Shell audit store is not enabled")
-        return ToolResult(ok=True, output=json.dumps(self.shell_audit.recent(), sort_keys=True))
+        return ToolResult(ok=True, output=json.dumps(self.shell_audit_store.recent(limit), sort_keys=True))
 
     def subagent_start(self, prompt: str, folder: str) -> ToolResult:
         if not self.background_tasks:
