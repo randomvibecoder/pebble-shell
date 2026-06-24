@@ -391,14 +391,6 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "event_hooks_list",
-                    "description": "List recent event hooks, registered hooks, and recent hook events.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
                     "name": "hook_events",
                     "description": "List recent HTTP webhook payload receipts and processing status for hooks such as suggestion boxes.",
                     "parameters": {
@@ -544,8 +536,6 @@ class WorkspaceTools:
                 return self.hook_set_enabled(arguments["name"], False)
             if name == "hook_remove":
                 return self.hook_remove(arguments["name"])
-            if name == "event_hooks_list":
-                return self.event_hooks_list()
             if name == "hook_events":
                 return self.hook_events(int(arguments.get("limit", 20)))
             if name == "hook_event_replay":
@@ -941,21 +931,6 @@ class WorkspaceTools:
             return ToolResult(ok=False, output="Event hook store is not enabled")
         self.event_hooks.delete_hook(name)
         return ToolResult(ok=True, output=f"Removed hook {name}; existing event history was kept")
-
-    def event_hooks_list(self) -> ToolResult:
-        if not self.event_hooks:
-            return ToolResult(ok=False, output="Event hook store is not enabled")
-        return ToolResult(
-            ok=True,
-            output=json.dumps(
-                {
-                    "hook_records": self.event_hooks.list_records(),
-                    "hooks": self.event_hooks.list_hooks(),
-                    "hook_events": self.event_hooks.list_webhook_events(),
-                },
-                sort_keys=True,
-            ),
-        )
 
     def hook_events(self, limit: int = 20) -> ToolResult:
         if not self.event_hooks:

@@ -28,15 +28,14 @@ def test_hook_events_are_visible_to_agent_tools(tmp_path: Path) -> None:
     store.mark_webhook_event_completed(event_id, "Summarized dark mode request.")
 
     dedicated = tools.run("hook_events", {"limit": 5})
-    combined = tools.run("event_hooks_list", {})
 
     assert dedicated.ok
-    assert json.loads(dedicated.output)[0]["payload"]["suggestion"] == "Add dark mode."
-    assert json.loads(dedicated.output)[0]["status"] == "completed"
-    combined_payload = json.loads(combined.output)
-    assert combined_payload["hook_events"][0]["name"] == "suggestion-box"
-    assert combined_payload["hooks"][0]["name"] == "suggestion-box"
-    assert "channel_id" not in combined.output
+    events = json.loads(dedicated.output)
+    assert len(events) == 1
+    assert events[0]["name"] == "suggestion-box"
+    assert events[0]["payload"]["suggestion"] == "Add dark mode."
+    assert events[0]["status"] == "completed"
+    assert "channel_id" not in dedicated.output
 
 
 def test_hook_management_tools_enable_disable_remove_and_show(tmp_path: Path) -> None:

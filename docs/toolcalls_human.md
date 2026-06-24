@@ -543,53 +543,6 @@ Failures:
 {"ok": false, "output": "Unknown hook: <name>"}
 ```
 
-### `event_hooks_list()`
-
-Lists hook records, hooks, and webhook events.
-
-Success output is a JSON object:
-
-```json
-{
-  "hook_events": [
-    {
-      "background": true,
-      "created_at": "YYYY-MM-DD HH:MM:SS",
-      "error": null,
-      "id": 1,
-      "name": "suggestions",
-      "payload": {"key": "value"},
-      "processed_at": "YYYY-MM-DD HH:MM:SS",
-      "result_excerpt": "Handled.",
-      "status": "completed"
-    }
-  ],
-  "hook_records": [
-    {
-      "created_at": "YYYY-MM-DD HH:MM:SS",
-      "data": {},
-      "description": "HTTP webhook hook suggestions",
-      "kind": "hook",
-      "name": "suggestions"
-    }
-  ],
-  "hooks": [
-    {
-      "enabled": true,
-      "name": "suggestions",
-      "prompt": "Handle suggestion payloads.",
-      "updated_at": "YYYY-MM-DD HH:MM:SS"
-    }
-  ]
-}
-```
-
-Failure:
-
-```json
-{"ok": false, "output": "Event hook store is not enabled"}
-```
-
 ### `hook_events(limit: int = 20)`
 
 Lists recent webhook events. `limit` is clamped to `1..50`.

@@ -107,7 +107,6 @@ The agent can register bounded, auditable runtime behavior through these primiti
 - `set_runtime_config`: change safe runtime settings like model or heartbeat interval.
 - `cron_job_save`: create scheduled automations with persisted run history.
 - `hook_events` and `hook_event_replay`: inspect recent webhook receipts or replay a prior event.
-- `event_hooks_list`: inspect the recent event hook ledger and hooks.
 
 These mechanisms let the agent learn workflows and connect future events without silently rewriting arbitrary core code.
 
