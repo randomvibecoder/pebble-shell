@@ -20,7 +20,7 @@ from .cron import CronStore
 from .shell_audit import ShellAuditStore
 from .memory import MemoryStore
 from .runtime_config import RuntimeConfigStore
-from .self_improvement import SelfImprovementStore, format_webhook_message
+from .event_hooks import EventHookStore, format_webhook_message
 from .tools import WorkspaceTools
 
 
@@ -42,8 +42,8 @@ Tool use:
 - Use ls, glob, grep, read, write, edit, patch, and bash for current workspace state, edits, command output, and verification.
 - For file edits, prefer edit for small exact replacements and patch for larger or multi-file patches. Use write for new files or full rewrites.
 - The agent process runs as `agent` inside its Docker container and has passwordless `sudo` for container-local administration. Shell commands have full control inside the container, including `sudo`; this is container privilege, not host root.
-- For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
-- For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
+- For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash.
+- For rendered browser behavior and UI verification, use an installed browser automation CLI/script through bash; install one first if the workspace needs it.
 - For background work: use subagent_start(prompt, folder) to start a worker. Use subagents for tasks likely to take a long time, require many tool calls, run servers/tests, perform broad research, or continue while you stay responsive to the user. The user does not need to explicitly ask for a subagent; start one when the task shape makes background work appropriate. Subagents run inside the Docker container with container-local sudo/root capability and may install packages, CLIs, browsers, dependencies, or other tools needed for their assigned work. The folder is required; `/name` means `/workspace/name`, and missing folders are created. After starting a subagent, write its job id, folder, and task to context/MEMORY.md so you can keep track of active and recent subagents. Use subagent_dashboard first when you need a cheap dashboard of all workers; it uses stored events/results and does not call an LLM. Use subagent_summary for a richer one-worker status summary when you need more detail about a specific worker; it may call the flash model only for that job. Use subagent_status and subagent_events for one worker's raw details; use subagent_ask for a focused question over one worker's context; use subagent_pause to pause after the current step; use subagent_send to resume or redirect a running/paused/blocked/completed worker. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Use subagent_cancel to stop active work. Use subagent_delete only for destructive cleanup when an inactive worker is definitely no longer needed; it deletes that worker's records, events, queued messages, and stored context.
 - Do not directly edit an active worker's assigned folder; ask or supervise that worker instead.
 - Use exec_command for shell commands with cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, and login. If a command is still running after yield_time_ms, keep the returned session_id and poll it with write_stdin(session_id, chars=""). Use write_stdin(session_id, chars) for interactive input. Commands run inside the Docker container.
@@ -61,7 +61,7 @@ Tool use:
 - Pebble's protected local HTTP routes use API_AUTH_TOKEN when configured. If you build a backend/server/script inside the container that needs to call Pebble's own protected HTTP API, make that program read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token and send Authorization: Bearer <token>. Do not copy the token into source code, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
 - Use cron_job_save for specific recurring automations; use heartbeat for broad periodic awareness.
 - Use set_runtime_config for user-requested model or heartbeat interval changes.
-- Durable self-memory lives in context/MEMORY.md. Use read, edit, write, or patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
+- Durable memory lives in context/MEMORY.md. Use read, edit, write, or patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
 
 Memory:
 - context/MEMORY.md is pinned into context as a cached snapshot. It refreshes at process startup and after context compaction, not after every edit.
@@ -140,8 +140,8 @@ Rules:
 - You have full shell control inside the Docker container, including container-local sudo/root capability. You may install packages, CLIs, browsers, dependencies, or other tools needed for your assigned work.
 - If your assigned work builds a backend/server/script that must call Pebble's protected local HTTP API, read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token and send Authorization: Bearer <token>. Do not copy the token into source code, browser JavaScript, logs, replies, or context files.
 - All relative file, search, bash, and exec_command paths operate from your assigned folder. For these tools, a leading / means /workspace, not container root.
-- For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash. Do not use Playwright for direct text files.
-- For rendered browser behavior and UI verification, use bash with Playwright CLI or short Playwright scripts.
+- For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash.
+- For rendered browser behavior and UI verification, use an installed browser automation CLI/script through bash; install one first if the assigned work needs it.
 - Prefer job-id-specific names for artifacts and commands when useful.
 - Use tools to inspect, edit, run, test, and verify. Do not claim completion without tool evidence.
 - You are already running as a background worker. Do not use exec_command as a way to hand off the assigned job and then stop. Use tools directly for the job. Use exec_command for real long-running servers, watchers, or daemons, then keep the session_id, poll with write_stdin, test against it, and report its status.
@@ -201,7 +201,7 @@ class CodingAgent:
         ensure_workspace_context_files(settings.agent_workspace, bundled_root)
         ensure_api_auth_token_file(settings)
         self.runtime_config = RuntimeConfigStore(settings.runtime_config_db_path)
-        self.self_improvement = SelfImprovementStore(settings.self_improvement_db_path)
+        self.event_hooks = EventHookStore(settings.event_hooks_db_path)
         self.cron = CronStore(settings.cron_db_path)
         self.shell_audit = ShellAuditStore(settings.shell_audit_db_path)
         self.memory = MemoryStore(settings.memory_db_path)
@@ -215,7 +215,7 @@ class CodingAgent:
             settings.agent_workspace,
             settings.shell_timeout_seconds,
             self.runtime_config,
-            self.self_improvement,
+            self.event_hooks,
             self.cron,
             self.shell_audit,
             self.memory,
@@ -274,23 +274,23 @@ class CodingAgent:
         return f"Queued replay for webhook event {event_id}"
 
     async def replay_hook_event(self, event_id: int) -> AgentResponse:
-        event = self.self_improvement.get_webhook_event(event_id)
+        event = self.event_hooks.get_webhook_event(event_id)
         if not event:
             raise ValueError(f"Unknown webhook event: {event_id}")
-        hook = self.self_improvement.get_hook(str(event["name"]))
+        hook = self.event_hooks.get_hook(str(event["name"]))
         if not hook:
             raise ValueError(f"Unknown hook for webhook event {event_id}: {event['name']}")
         if not hook["enabled"]:
             raise ValueError(f"Webhook hook is disabled: {event['name']}")
-        replay_event_id = self.self_improvement.record_webhook_event(str(event["name"]), dict(event["payload"]), background=True)
-        self.self_improvement.mark_webhook_event_processing(replay_event_id)
+        replay_event_id = self.event_hooks.record_webhook_event(str(event["name"]), dict(event["payload"]), background=True)
+        self.event_hooks.mark_webhook_event_processing(replay_event_id)
         try:
             content = format_webhook_message(str(event["name"]), str(hook["prompt"]), dict(event["payload"]))
             response = await self.run_internal_event(content, f"webhook:{event['name']}:replay")
         except Exception as exc:
-            self.self_improvement.mark_webhook_event_failed(replay_event_id, str(exc))
+            self.event_hooks.mark_webhook_event_failed(replay_event_id, str(exc))
             raise
-        self.self_improvement.mark_webhook_event_completed(replay_event_id, response.content)
+        self.event_hooks.mark_webhook_event_completed(replay_event_id, response.content)
         return response
 
     async def _run_locked(
@@ -435,7 +435,7 @@ class CodingAgent:
             self.settings.agent_workspace,
             self.settings.shell_timeout_seconds,
             runtime_config=self.runtime_config,
-            self_improvement=self.self_improvement,
+            event_hooks=self.event_hooks,
             cron=self.cron,
             shell_audit=self.shell_audit,
             memory=self.memory,

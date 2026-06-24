@@ -103,10 +103,10 @@ class MemoryStore:
                 (through_message_id, recent_limit),
             ).fetchall()
 
-        legacy_recent = list(reversed([(row["role"], row["content"]) for row in recent_rows]))
+        recent_text_pairs = list(reversed([(row["role"], row["content"]) for row in recent_rows]))
         raw_recent = [_row_to_raw_message(row) for row in reversed(recent_rows)]
         recent_messages, recent_raw_messages = _fit_recent_messages(
-            legacy_recent,
+            recent_text_pairs,
             raw_recent,
             recent_token_budget,
         )

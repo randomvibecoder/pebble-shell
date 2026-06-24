@@ -28,7 +28,7 @@ from .discord_interactions import (
 from .heartbeat import HeartbeatRunner
 from .public_sites import list_public_sites
 from .schemas import ChatResponse, CronEnableRequest, CronJobRequest, WebhookAcceptedResponse
-from .self_improvement import format_webhook_message
+from .event_hooks import format_webhook_message
 
 app = FastAPI(title="Pebble Shell", version=__version__)
 app.add_middleware(
@@ -81,10 +81,10 @@ async def status(request: Request) -> dict[str, Any]:
     agent = get_agent()
     runtime_config = agent.runtime_config.all()
     heartbeat_every_seconds = runtime_config.get("heartbeat_every_seconds") or str(settings.heartbeat_every_seconds)
-    hooks = agent.self_improvement.list_hooks()
+    hooks = agent.event_hooks.list_hooks()
     jobs = agent.cron.list_jobs()
-    recent_improvements = agent.self_improvement.list_records(limit=10)
-    recent_webhook_events = agent.self_improvement.list_webhook_events(limit=10)
+    recent_hook_records = agent.event_hooks.list_records(limit=10)
+    recent_webhook_events = agent.event_hooks.list_webhook_events(limit=10)
     return {
         "agent": {
             "version": app.version,
@@ -127,10 +127,10 @@ async def status(request: Request) -> dict[str, Any]:
             "enabled_job_count": sum(1 for job in jobs if job["enabled"]),
             "recent_run_count": len(agent.cron.list_runs(limit=10)),
         },
-        "self_improvement": {
+        "event_hooks": {
             "webhook_hook_count": len(hooks),
             "recent_webhook_events": recent_webhook_events,
-            "recent_improvements": recent_improvements,
+            "recent_hook_records": recent_hook_records,
         },
     }
 
@@ -293,12 +293,12 @@ async def webhook_trigger(
     _require_local_webhook_request(request)
     _require_api_auth(request)
     agent = get_agent()
-    hook = agent.self_improvement.get_hook(name)
+    hook = agent.event_hooks.get_hook(name)
     if not hook:
         raise HTTPException(status_code=404, detail=f"Unknown webhook hook: {name}")
     if not hook["enabled"]:
         raise HTTPException(status_code=409, detail=f"Webhook hook is disabled: {name}")
-    event_id = agent.self_improvement.record_webhook_event(name, payload, True)
+    event_id = agent.event_hooks.record_webhook_event(name, payload, True)
     background_tasks.add_task(_run_webhook_hook_recorded, name, payload, event_id)
     return WebhookAcceptedResponse(
         event_id=event_id,
@@ -312,7 +312,7 @@ async def webhook_event_replay(event_id: int, request: Request, background_tasks
     _require_local_webhook_request(request)
     _require_api_auth(request)
     agent = get_agent()
-    event = agent.self_improvement.get_webhook_event(event_id)
+    event = agent.event_hooks.get_webhook_event(event_id)
     if not event:
         raise HTTPException(status_code=404, detail=f"Unknown webhook event: {event_id}")
     background_tasks.add_task(agent.replay_hook_event, event_id)
@@ -325,19 +325,19 @@ async def webhook_event_replay(event_id: int, request: Request, background_tasks
 
 async def _run_webhook_hook_recorded(name: str, payload: dict[str, Any], event_id: int) -> AgentResponse:
     agent = get_agent()
-    agent.self_improvement.mark_webhook_event_processing(event_id)
+    agent.event_hooks.mark_webhook_event_processing(event_id)
     try:
         response = await _run_webhook_hook(name, payload)
     except Exception as exc:
-        agent.self_improvement.mark_webhook_event_failed(event_id, str(exc))
+        agent.event_hooks.mark_webhook_event_failed(event_id, str(exc))
         raise
-    agent.self_improvement.mark_webhook_event_completed(event_id, response.content)
+    agent.event_hooks.mark_webhook_event_completed(event_id, response.content)
     return response
 
 
 async def _run_webhook_hook(name: str, payload: dict[str, Any]) -> AgentResponse:
     agent = get_agent()
-    hook = agent.self_improvement.get_hook(name)
+    hook = agent.event_hooks.get_hook(name)
     if not hook:
         raise ValueError(f"Unknown webhook hook: {name}")
     content = format_webhook_message(name, hook["prompt"], payload)

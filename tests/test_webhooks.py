@@ -7,14 +7,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from pebble_shell.agent import AgentResponse
-from pebble_shell.self_improvement import SelfImprovementStore, format_webhook_message
+from pebble_shell.event_hooks import EventHookStore, format_webhook_message
 import pebble_shell.server as server
 from pebble_shell.server import app
 
 
 @dataclass
 class FakeWebhookAgent:
-    self_improvement: SelfImprovementStore
+    event_hooks: EventHookStore
     calls: list[tuple[str, str]]
 
     async def run_internal_event(self, content: str, source: str) -> AgentResponse:
@@ -22,28 +22,28 @@ class FakeWebhookAgent:
         return AgentResponse(content=f"handled {source}", steps=1)
 
     async def replay_hook_event(self, event_id: int) -> AgentResponse:
-        event = self.self_improvement.get_webhook_event(event_id)
-        hook = self.self_improvement.get_hook(event["name"])
-        replay_event_id = self.self_improvement.record_webhook_event(event["name"], event["payload"], background=True)
-        self.self_improvement.mark_webhook_event_processing(replay_event_id)
+        event = self.event_hooks.get_webhook_event(event_id)
+        hook = self.event_hooks.get_hook(event["name"])
+        replay_event_id = self.event_hooks.record_webhook_event(event["name"], event["payload"], background=True)
+        self.event_hooks.mark_webhook_event_processing(replay_event_id)
         response = await self.run_internal_event(
             format_webhook_message(event["name"], hook["prompt"], event["payload"]),
             f"webhook:{event['name']}:replay",
         )
-        self.self_improvement.mark_webhook_event_completed(replay_event_id, response.content)
+        self.event_hooks.mark_webhook_event_completed(replay_event_id, response.content)
         return response
 
 
 @dataclass
 class FailingWebhookAgent:
-    self_improvement: SelfImprovementStore
+    event_hooks: EventHookStore
 
     async def run_internal_event(self, content: str, source: str) -> AgentResponse:
         raise RuntimeError("model unavailable")
 
 
 def test_webhook_trigger_routes_fake_email_environment(tmp_path: Path, monkeypatch) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     store.upsert_hook("email-alert", "Classify priority and summarize sender intent.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
@@ -79,7 +79,7 @@ def test_webhook_trigger_routes_fake_email_environment(tmp_path: Path, monkeypat
 
 
 def test_webhook_trigger_routes_fake_ci_environment(tmp_path: Path, monkeypatch) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     store.upsert_hook("ci-failure", "Inspect failed checks and propose the next bounded fix.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
@@ -105,7 +105,7 @@ def test_webhook_trigger_routes_fake_ci_environment(tmp_path: Path, monkeypatch)
 
 
 def test_webhook_trigger_acknowledges_event_immediately(tmp_path: Path, monkeypatch) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     store.upsert_hook("suggestion-box", "Summarize suggestions.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
@@ -131,7 +131,7 @@ def test_webhook_trigger_acknowledges_event_immediately(tmp_path: Path, monkeypa
 
 
 def test_webhook_event_replay_routes_original_payload(tmp_path: Path, monkeypatch) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     store.upsert_hook("suggestion-box", "Summarize suggestions.")
     event_id = store.record_webhook_event("suggestion-box", {"suggestion": "Add keyboard shortcuts."}, background=True)
     fake = FakeWebhookAgent(store, [])
@@ -156,7 +156,7 @@ def test_webhook_event_replay_routes_original_payload(tmp_path: Path, monkeypatc
 
 
 def test_webhook_event_records_failures(tmp_path: Path, monkeypatch) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     store.upsert_hook("failing-hook", "Handle failures.")
     monkeypatch.setattr(server, "get_agent", lambda: FailingWebhookAgent(store))
 
@@ -171,9 +171,9 @@ def test_webhook_event_records_failures(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_webhook_trigger_rejects_disabled_hook(tmp_path: Path, monkeypatch) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     store.upsert_hook("disabled-hook", "Do not run.")
-    with sqlite3.connect(tmp_path / "self.sqlite3") as conn:
+    with sqlite3.connect(tmp_path / "hooks.sqlite3") as conn:
         conn.execute("update webhook_hooks set enabled = 0 where name = 'disabled-hook'")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)
@@ -185,7 +185,7 @@ def test_webhook_trigger_rejects_disabled_hook(tmp_path: Path, monkeypatch) -> N
 
 
 def test_webhook_trigger_rejects_non_local_callers(tmp_path: Path, monkeypatch) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     store.upsert_hook("local-only", "Handle local events.")
     fake = FakeWebhookAgent(store, [])
     monkeypatch.setattr(server, "get_agent", lambda: fake)

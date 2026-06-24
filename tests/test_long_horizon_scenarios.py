@@ -12,7 +12,7 @@ from pebble_shell.shell_audit import ShellAuditStore
 from pebble_shell.heartbeat import HeartbeatRunner
 from pebble_shell.memory import MemoryStore
 from pebble_shell.runtime_config import RuntimeConfigStore
-from pebble_shell.self_improvement import SelfImprovementStore
+from pebble_shell.event_hooks import EventHookStore
 from pebble_shell.tools import WorkspaceTools
 
 
@@ -46,14 +46,14 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
     workspace.mkdir()
     runtime = RuntimeConfigStore(tmp_path / "runtime.sqlite3")
     memory = MemoryStore(tmp_path / "memory.sqlite3")
-    self_improvement = SelfImprovementStore(tmp_path / "self.sqlite3")
+    event_hooks = EventHookStore(tmp_path / "hooks.sqlite3")
     cron = CronStore(tmp_path / "cron.sqlite3")
     shell_audit = ShellAuditStore(tmp_path / "shell.sqlite3")
     tools = WorkspaceTools(
         workspace,
         shell_timeout_seconds=1,
         runtime_config=runtime,
-        self_improvement=self_improvement,
+        event_hooks=event_hooks,
         cron=cron,
         shell_audit=shell_audit,
         memory=memory,
@@ -80,11 +80,11 @@ async def test_multi_day_self_modification_heartbeat_and_restart(tmp_path: Path)
 
     reloaded_runtime = RuntimeConfigStore(tmp_path / "runtime.sqlite3")
     reloaded_memory = MemoryStore(tmp_path / "memory.sqlite3")
-    reloaded_self_improvement = SelfImprovementStore(tmp_path / "self.sqlite3")
+    reloaded_event_hooks = EventHookStore(tmp_path / "hooks.sqlite3")
     reloaded_cron = CronStore(tmp_path / "cron.sqlite3")
 
     assert reloaded_runtime.get("heartbeat_every_seconds") == "3600"
-    assert reloaded_self_improvement.get_hook("email-alert") is not None
+    assert reloaded_event_hooks.get_hook("email-alert") is not None
     assert reloaded_cron.list_runs("daily-check")[0]["ok"]
     assert reloaded_memory.get_context("", 10).recent_messages
     assert (workspace / "context" / "MEMORY.md").read_text(encoding="utf-8") == "The recovery owner is platform-oncall."

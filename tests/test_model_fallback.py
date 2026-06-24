@@ -140,7 +140,7 @@ def _agent(tmp_path: Path, **overrides: object) -> CodingAgent:
         agent_workspace=tmp_path / "workspace",
         memory_db_path=tmp_path / "memory.sqlite3",
         runtime_config_db_path=tmp_path / "runtime.sqlite3",
-        self_improvement_db_path=tmp_path / "self.sqlite3",
+        event_hooks_db_path=tmp_path / "hooks.sqlite3",
         cron_db_path=tmp_path / "cron.sqlite3",
         shell_audit_db_path=tmp_path / "exec.sqlite3",
         background_tasks_db_path=tmp_path / "background.sqlite3",

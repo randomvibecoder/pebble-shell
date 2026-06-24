@@ -3,13 +3,13 @@ from pathlib import Path
 import json
 import pytest
 
-from pebble_shell.self_improvement import SelfImprovementStore
+from pebble_shell.event_hooks import EventHookStore
 from pebble_shell.tools import WorkspaceTools
 
 
 def test_hook_set_registers_hook(tmp_path: Path) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, self_improvement=store)
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
+    tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, event_hooks=store)
 
     result = tools.hook_set("email", "Summarize inbound email payloads.")
 
@@ -21,14 +21,14 @@ def test_hook_set_registers_hook(tmp_path: Path) -> None:
 
 
 def test_hook_events_are_visible_to_agent_tools(tmp_path: Path) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, self_improvement=store)
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
+    tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, event_hooks=store)
     store.upsert_hook("suggestion-box", "Summarize suggestions.")
     event_id = store.record_webhook_event("suggestion-box", {"suggestion": "Add dark mode."}, background=True)
     store.mark_webhook_event_completed(event_id, "Summarized dark mode request.")
 
     dedicated = tools.run("hook_events", {"limit": 5})
-    combined = tools.run("self_improvements_list", {})
+    combined = tools.run("event_hooks_list", {})
 
     assert dedicated.ok
     assert json.loads(dedicated.output)[0]["payload"]["suggestion"] == "Add dark mode."
@@ -40,8 +40,8 @@ def test_hook_events_are_visible_to_agent_tools(tmp_path: Path) -> None:
 
 
 def test_hook_management_tools_enable_disable_remove_and_show(tmp_path: Path) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
-    tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, self_improvement=store)
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
+    tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, event_hooks=store)
 
     assert tools.run("hook_set", {"name": "suggestion-box", "prompt": "Summarize suggestions."}).ok
     assert json.loads(tools.run("hook_show", {"name": "suggestion-box"}).output)["enabled"] is True
@@ -57,12 +57,12 @@ def test_hook_management_tools_enable_disable_remove_and_show(tmp_path: Path) ->
 
 
 def test_hook_event_replay_schedules_existing_event(tmp_path: Path) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
     calls: list[int] = []
     tools = WorkspaceTools(
         tmp_path / "workspace",
         shell_timeout_seconds=1,
-        self_improvement=store,
+        event_hooks=store,
         webhook_replayer=lambda event_id: calls.append(event_id) or f"queued {event_id}",
     )
     store.upsert_hook("suggestion-box", "Summarize suggestions.")
@@ -76,7 +76,7 @@ def test_hook_event_replay_schedules_existing_event(tmp_path: Path) -> None:
 
 
 def test_webhook_hook_rejects_unsafe_names(tmp_path: Path) -> None:
-    store = SelfImprovementStore(tmp_path / "self.sqlite3")
+    store = EventHookStore(tmp_path / "hooks.sqlite3")
 
     with pytest.raises(ValueError):
         store.upsert_hook("../email", "prompt")

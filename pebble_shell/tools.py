@@ -22,7 +22,7 @@ from .memory import MemoryStore
 from .process_manager import BackgroundProcessManager
 from .public_sites import list_public_sites
 from .runtime_config import RuntimeConfigStore
-from .self_improvement import SelfImprovementStore
+from .event_hooks import EventHookStore
 
 MAX_READ_FILE_BYTES = 40_000
 MAX_READ_FILE_CHARS = 40_000
@@ -46,7 +46,7 @@ class WorkspaceTools:
         root: Path,
         shell_timeout_seconds: int,
         runtime_config: RuntimeConfigStore | None = None,
-        self_improvement: SelfImprovementStore | None = None,
+        event_hooks: EventHookStore | None = None,
         cron: CronStore | None = None,
         shell_audit: ShellAuditStore | None = None,
         memory: MemoryStore | None = None,
@@ -73,7 +73,7 @@ class WorkspaceTools:
         self.cwd.mkdir(parents=True, exist_ok=True)
         self.shell_timeout_seconds = shell_timeout_seconds
         self.runtime_config = runtime_config
-        self.self_improvement = self_improvement
+        self.event_hooks = event_hooks
         self.cron = cron
         self.shell_audit = shell_audit
         self.memory = memory
@@ -416,8 +416,8 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "self_improvements_list",
-                    "description": "List recent self-improvements, registered hooks, and recent hook events.",
+                    "name": "event_hooks_list",
+                    "description": "List recent event hooks, registered hooks, and recent hook events.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -573,8 +573,8 @@ class WorkspaceTools:
                 return self.hook_set_enabled(arguments["name"], False)
             if name == "hook_remove":
                 return self.hook_remove(arguments["name"])
-            if name == "self_improvements_list":
-                return self.self_improvements_list()
+            if name == "event_hooks_list":
+                return self.event_hooks_list()
             if name == "hook_events":
                 return self.hook_events(int(arguments.get("limit", 20)))
             if name == "hook_event_replay":
@@ -971,10 +971,10 @@ class WorkspaceTools:
         return ToolResult(ok=True, output=f"Set {key}={value}")
 
     def hook_set(self, name: str, prompt: str) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
-        self.self_improvement.upsert_hook(name, prompt)
-        self.self_improvement.record("hook", name, f"HTTP webhook hook {name}", {})
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
+        self.event_hooks.upsert_hook(name, prompt)
+        self.event_hooks.record("hook", name, f"HTTP webhook hook {name}", {})
         return ToolResult(
             ok=True,
             output=(
@@ -986,56 +986,56 @@ class WorkspaceTools:
         )
 
     def hook_list(self) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
-        return ToolResult(ok=True, output=json.dumps(self.self_improvement.list_hooks(), sort_keys=True))
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
+        return ToolResult(ok=True, output=json.dumps(self.event_hooks.list_hooks(), sort_keys=True))
 
     def hook_show(self, name: str) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
-        hook = self.self_improvement.get_hook(name)
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
+        hook = self.event_hooks.get_hook(name)
         if not hook:
             return ToolResult(ok=False, output=f"Unknown hook: {name}")
         return ToolResult(ok=True, output=json.dumps(hook, sort_keys=True))
 
     def hook_set_enabled(self, name: str, enabled: bool) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
-        self.self_improvement.set_hook_enabled(name, enabled)
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
+        self.event_hooks.set_hook_enabled(name, enabled)
         return ToolResult(ok=True, output=f"Set hook {name} enabled={enabled}")
 
     def hook_remove(self, name: str) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
-        self.self_improvement.delete_hook(name)
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
+        self.event_hooks.delete_hook(name)
         return ToolResult(ok=True, output=f"Removed hook {name}; existing event history was kept")
 
-    def self_improvements_list(self) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
+    def event_hooks_list(self) -> ToolResult:
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
         return ToolResult(
             ok=True,
             output=json.dumps(
                 {
-                    "improvements": self.self_improvement.list_records(),
-                    "hooks": self.self_improvement.list_hooks(),
-                    "hook_events": self.self_improvement.list_webhook_events(),
+                    "hook_records": self.event_hooks.list_records(),
+                    "hooks": self.event_hooks.list_hooks(),
+                    "hook_events": self.event_hooks.list_webhook_events(),
                 },
                 sort_keys=True,
             ),
         )
 
     def hook_events(self, limit: int = 20) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
-        return ToolResult(ok=True, output=json.dumps(self.self_improvement.list_webhook_events(max(1, min(limit, 50))), sort_keys=True))
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
+        return ToolResult(ok=True, output=json.dumps(self.event_hooks.list_webhook_events(max(1, min(limit, 50))), sort_keys=True))
 
     def hook_event_replay(self, event_id: int) -> ToolResult:
-        if not self.self_improvement:
-            return ToolResult(ok=False, output="Self-improvement store is not enabled")
+        if not self.event_hooks:
+            return ToolResult(ok=False, output="Event hook store is not enabled")
         if not self.webhook_replayer:
             return ToolResult(ok=False, output="Webhook replay scheduler is not enabled")
-        event = self.self_improvement.get_webhook_event(event_id)
+        event = self.event_hooks.get_webhook_event(event_id)
         if not event:
             return ToolResult(ok=False, output=f"Unknown webhook event: {event_id}")
         return ToolResult(ok=True, output=self.webhook_replayer(event_id))
@@ -1294,7 +1294,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "subagent_list",
-                    "description": "List recent background worker jobs as structured JSON, optionally filtered by status. Use subagent_dashboard when you want the readable supervisor table.",
+                    "description": "List recent background worker jobs as structured JSON, optionally filtered by status. Use subagent_dashboard when you want concise stored supervisor status.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1309,8 +1309,8 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
             "function": {
                 "name": "subagent_dashboard",
                 "description": (
-                    "Show Pebble a readable supervisor table for background agents: elapsed time, model, status, "
-                    "steps, token usage when available, deterministic recent activity from stored events/results, and warning flags. "
+                    "Show Pebble concise structured supervisor status for background agents: elapsed time, model, status, "
+                    "steps, model calls, token usage when available, deterministic recent activity from stored events/results, and warning flags. "
                     "This does not call an LLM."
                 ),
                 "parameters": {

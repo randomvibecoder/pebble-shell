@@ -99,20 +99,20 @@ Workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `ca
 
 Each worker is assigned a required folder. A folder like `/myproject` maps to `/workspace/myproject`; missing folders are created. Relative file/search/bash/exec_command paths in a worker resolve from that assigned folder, while leading `/` in file tools means `/workspace`. Docker Compose exposes ports `8080-8085` and `4001` so several background workers can run webdev tests in parallel.
 
-## Self-Improvement
+## Event Hooks
 
-The agent can improve itself through bounded, auditable primitives:
+The agent can register bounded, auditable runtime behavior through these primitives:
 
-- `context/MEMORY.md`: durable self-memory maintained with normal file tools.
+- `context/MEMORY.md`: durable memory maintained with normal file tools.
 - `hook_set`: register a named HTTP webhook, for example an email event hook. Manage hooks with `hook_list`, `hook_show`, `hook_enable`, `hook_disable`, and `hook_remove`.
 - `set_runtime_config`: change safe runtime settings like model or heartbeat interval.
 - `cron_job_save`: create scheduled automations with persisted run history.
 - `hook_events` and `hook_event_replay`: inspect recent webhook receipts or replay a prior event.
-- `self_improvements_list`: inspect the recent improvement ledger and hooks.
+- `event_hooks_list`: inspect the recent event hook ledger and hooks.
 
 These mechanisms let the agent learn workflows and connect future events without silently rewriting arbitrary core code.
 
-Webhook triggers are local-only event ingress. `POST /webhooks/{name}` records an event, returns an event id/status immediately, and never returns the agent's final answer. Every accepted webhook payload is recorded in the self-improvement ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt. Injected webhook turns include a UTC timestamp in the same `YYYY-MM-DD HH:MM:SS UTC` style as heartbeat turns.
+Webhook triggers are local-only event ingress. `POST /webhooks/{name}` records an event, returns an event id/status immediately, and never returns the agent's final answer. Every accepted webhook payload is recorded in the hook ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt. Injected webhook turns include a UTC timestamp in the same `YYYY-MM-DD HH:MM:SS UTC` style as heartbeat turns.
 
 For external apps, websites, CLIs, or APIs, have Pebble build an adapter server/script/daemon. The adapter receives the external request, calls Pebble's localhost webhook from inside the container, and exposes an adapter-specific response path such as `send.sh`, `reply_ticket.py`, `send_email.py`, or a local HTTP endpoint. If a generated backend needs to call a protected webhook, have it read `/workspace/.pebble_shell/secrets/api_auth_token` at runtime and send `Authorization: Bearer <token>`. Do not put that token in client-side browser code.
 
@@ -130,7 +130,7 @@ The Docker entrypoint starts the HTTP server and the cron runner. It also starts
 
 The agent keeps three layers of context:
 
-- A cached `context/MEMORY.md` snapshot for durable self-memory. It is loaded at process start and refreshed after context compaction, not reread every turn.
+- A cached `context/MEMORY.md` snapshot for durable memory. It is loaded at process start and refreshed after context compaction, not reread every turn.
 - Recent exact messages for the primary chat, bounded by both `RECENT_MESSAGE_LIMIT` and `RECENT_MESSAGE_TOKEN_BUDGET`.
 - Reactive summaries when a foreground or background model call hits a provider context-length limit.
 

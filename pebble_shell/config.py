@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     agent_workspace: Path = Path("/workspace")
     memory_db_path: Path = Path("/workspace/.pebble_shell/memory.sqlite3")
     runtime_config_db_path: Path = Path("/workspace/.pebble_shell/runtime_config.sqlite3")
-    self_improvement_db_path: Path = Path("/workspace/.pebble_shell/self_improvement.sqlite3")
+    event_hooks_db_path: Path = Path("/workspace/.pebble_shell/event_hooks.sqlite3")
     cron_db_path: Path = Path("/workspace/.pebble_shell/cron.sqlite3")
     shell_audit_db_path: Path = Path("/workspace/.pebble_shell/shell_audit.sqlite3")
     background_tasks_db_path: Path = Path("/workspace/.pebble_shell/background_tasks.sqlite3")

@@ -11,7 +11,7 @@ from typing import Any
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
-class SelfImprovementStore:
+class EventHookStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -20,14 +20,14 @@ class SelfImprovementStore:
     def record(self, kind: str, name: str, description: str, data: dict[str, Any] | None = None) -> None:
         with self._connect() as conn:
             conn.execute(
-                "insert into improvements(kind, name, description, data) values (?, ?, ?, ?)",
+                "insert into hook_records(kind, name, description, data) values (?, ?, ?, ?)",
                 (kind, name, description, json.dumps(data or {}, sort_keys=True)),
             )
 
     def list_records(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "select kind, name, description, data, created_at from improvements order by id desc limit ?",
+                "select kind, name, description, data, created_at from hook_records order by id desc limit ?",
                 (limit,),
             ).fetchall()
         return [
@@ -169,7 +169,7 @@ class SelfImprovementStore:
         with self._connect() as conn:
             conn.executescript(
                 """
-                create table if not exists improvements (
+                create table if not exists hook_records (
                     id integer primary key autoincrement,
                     kind text not null,
                     name text not null,
@@ -199,10 +199,6 @@ class SelfImprovementStore:
                 create index if not exists idx_webhook_events_name on webhook_events(name, id);
                 """
             )
-            _ensure_column(conn, "webhook_events", "status", "text not null default 'received'")
-            _ensure_column(conn, "webhook_events", "result_excerpt", "text")
-            _ensure_column(conn, "webhook_events", "error", "text")
-            _ensure_column(conn, "webhook_events", "processed_at", "text")
 
 
 def _validate_name(name: str) -> None:
@@ -233,8 +229,3 @@ def _webhook_event_row(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
         "processed_at": row[8],
     }
 
-
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    columns = {row[1] for row in conn.execute(f"pragma table_info({table})").fetchall()}
-    if column not in columns:
-        conn.execute(f"alter table {table} add column {column} {definition}")

@@ -153,7 +153,7 @@ async def test_subagent_start_sends_debug_notice_and_creates_folder(tmp_path: Pa
 @pytest.mark.asyncio
 async def test_subagent_pause_stops_after_current_step_and_message_resumes(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("pause me", "pause me", "background_jobs/test")
+    job = agent.background_store.create_job("pause me", "background_jobs/test")
 
     async def one_step(job) -> AgentResponse:
         return AgentResponse(content="step finished", steps=1)
@@ -184,7 +184,7 @@ async def test_background_worker_send_msg_records_progress_and_wakes_foreground(
         delivered.append(text)
 
     agent.set_deliver(deliver)
-    job = agent.background_store.create_job("make progress", "make progress", "background_jobs/test")
+    job = agent.background_store.create_job("make progress", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(ToolMessage("send_msg", {"msg": "Halfway through the build."})),
@@ -222,7 +222,7 @@ async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_pat
     )  # type: ignore[assignment]
 
     response = await agent.run_user_message(
-        "Start a background worker with subagent_start. Title: real monitor. Task: monitor the test sites.",
+        "Start a background worker with subagent_start. Folder: real-monitor. Task: monitor the test sites.",
     )
 
     assert response.content == "Worker started with the real tool result."
@@ -241,7 +241,7 @@ async def test_foreground_cannot_fake_background_start_without_tool_call(tmp_pat
 @pytest.mark.asyncio
 async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "background_jobs/test")
     (agent.settings.agent_workspace / job.folder).mkdir(parents=True)
     agent.client = FakeClient(
         [
@@ -273,7 +273,7 @@ async def test_background_worker_stores_exact_tool_context(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_background_job_self_check_complete_records_usage(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("Wrote and verified the page."), FakeUsage(10, 4, 14)),
@@ -299,7 +299,7 @@ async def test_background_job_self_check_complete_records_usage(tmp_path: Path) 
 @pytest.mark.asyncio
 async def test_background_job_needs_attention_after_three_self_check_retries(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("finish a hard task", "hard", "background_jobs/test")
+    job = agent.background_store.create_job("finish a hard task", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("I am not done yet.")),
@@ -326,7 +326,7 @@ async def test_background_job_needs_attention_after_three_self_check_retries(tmp
 @pytest.mark.asyncio
 async def test_background_job_needs_attention_survives_flash_summary_failure(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("finish a hard task", "hard", "background_jobs/test")
+    job = agent.background_store.create_job("finish a hard task", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("I am not done yet.")),
@@ -355,7 +355,7 @@ async def test_background_job_needs_attention_survives_flash_summary_failure(tmp
 @pytest.mark.asyncio
 async def test_background_job_blocked_remains_messageable_and_resumes(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("do a blocked task", "blocked", "background_jobs/test")
+    job = agent.background_store.create_job("do a blocked task", "background_jobs/test")
     agent.client = FakeClient(
         [
             FakeResponse(FinalMessage("Blocked on missing input.")),
@@ -380,7 +380,7 @@ async def test_background_job_blocked_remains_messageable_and_resumes(tmp_path: 
 @pytest.mark.asyncio
 async def test_background_job_completed_can_be_messaged_and_completed_again(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "background_jobs/test")
     agent.background_store.save_context(job.id, [{"role": "assistant", "content": "Original page is done."}])
     agent.background_store.complete_job(job.id, "Original page complete.", 2)
     completed = agent.background_store.get_job(job.id)
@@ -424,7 +424,7 @@ async def test_background_job_completed_can_be_messaged_and_completed_again(tmp_
 
 def test_background_job_canceled_rejects_messages(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("cancel me", "cancel", "background_jobs/test")
+    job = agent.background_store.create_job("cancel me", "background_jobs/test")
     agent.background_store.mark_cancelled(job.id, 0)
 
     result = agent.tools.run("subagent_send", {"job_id": job.id, "message": "Resume this canceled worker."})
@@ -438,7 +438,7 @@ def test_background_job_canceled_rejects_messages(tmp_path: Path) -> None:
 
 def test_subagent_delete_deletes_inactive_job_records_and_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make cleanup data", "cleanup", "background_jobs/test")
+    job = agent.background_store.create_job("make cleanup data", "background_jobs/test")
     agent.background_store.save_context(job.id, [{"role": "assistant", "content": "stored context"}])
     agent.background_store.enqueue_message(job.id, "queued instruction")
     agent.background_store.complete_job(job.id, "done", 1)
@@ -455,7 +455,7 @@ def test_subagent_delete_deletes_inactive_job_records_and_context(tmp_path: Path
 
 def test_subagent_delete_rejects_active_worker(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("still running", "running", "background_jobs/test")
+    job = agent.background_store.create_job("still running", "background_jobs/test")
 
     result = agent.tools.run("subagent_delete", {"job_id": job.id})
 
@@ -501,9 +501,9 @@ def test_old_background_tool_names_are_not_available(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_subagent_dashboard_table_uses_stored_activity_without_flash(tmp_path: Path) -> None:
+async def test_subagent_dashboard_uses_stored_activity_without_flash(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
+    job = agent.background_store.create_job("make a status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.add_event(job.id, "tool_call", "write: ok")
     agent.background_store.record_model_usage(job.id, "claude-haiku-4-5-20251001", 100, 20, 120)
@@ -512,32 +512,80 @@ async def test_subagent_dashboard_table_uses_stored_activity_without_flash(tmp_p
 
     status = await agent.background_tasks.status_table(limit=5)
 
-    assert "markdown" in status
-    assert "| job_id | model | status | elapsed | steps | tokens | recent_activity | flags |" in status["markdown"]
+    assert "markdown" not in status
     row = status["jobs"][0]
     assert row["job_id"] == job.id
+    assert "title" not in row
     assert row["model"] == "claude-haiku-4-5-20251001"
-    assert row["tokens"] == "120"
+    assert row["tokens"] == {"prompt": 100, "completion": 20, "total": 120}
     assert row["tool_calls"] == 1
-    assert "tool_call: write: ok" in row["recent_activity"]
+    assert isinstance(row["recent_activity"], list)
+    assert row["recent_activity"][0]["time"].endswith(" UTC")
+    assert row["recent_activity"][0]["message"] == "write: ok"
+    assert "kind" not in row["recent_activity"][0]
     assert agent.client.chat.completions.calls == []  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
 async def test_subagent_summary_uses_flash_for_one_worker(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
+    job = agent.background_store.create_job("make a status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.add_event(job.id, "tool_call", "write: ok")
     agent.background_store.save_context(job.id, [{"role": "assistant", "content": "Wrote index.html."}])
-    agent.client = FakeClient([FakeResponse(FinalMessage("Done: wrote index.html. Now: running browser check."))])  # type: ignore[assignment]
+    agent.client = FakeClient([FakeResponse(FinalMessage("Wrote index.html. " + ("x" * 1200)))])  # type: ignore[assignment]
 
     status = await agent.background_tasks.recent_status(job.id)
 
     assert status["job_id"] == job.id
     assert status["summary_source"] == "flash"
-    assert "Done: wrote index.html" in status["recent_activity"]
+    assert status["recent_activity"].startswith("Wrote index.html.")
+    assert len(status["recent_activity"]) == 1000
     assert len(agent.client.chat.completions.calls) == 1  # type: ignore[attr-defined]
+    system_prompt = agent.client.chat.completions.calls[0]["messages"][0]["content"]  # type: ignore[attr-defined]
+    assert "one concise paragraph" in system_prompt
+    assert "Keep under 1000 characters" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_subagent_summary_reuses_cache_until_events_or_context_change(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    job = agent.background_store.create_job("make a status page", "background_jobs/test")
+    agent.background_store.start_job(job.id)
+    agent.background_store.add_event(job.id, "tool_call", "write: ok")
+    agent.background_store.save_context(job.id, [{"role": "assistant", "content": "Wrote index.html."}])
+    agent.client = FakeClient(
+        [
+            FakeResponse(FinalMessage("First cached summary.")),
+            FakeResponse(FinalMessage("Second summary after change.")),
+            FakeResponse(FinalMessage("Third summary after context change.")),
+        ]
+    )  # type: ignore[assignment]
+
+    first = await agent.background_tasks.recent_status(job.id)
+    second = await agent.background_tasks.recent_status(job.id)
+
+    assert first["recent_activity"] == "First cached summary."
+    assert second["recent_activity"] == "First cached summary."
+    assert len(agent.client.chat.completions.calls) == 1  # type: ignore[attr-defined]
+
+    agent.background_store.add_event(job.id, "tool_call", "read: ok")
+    third = await agent.background_tasks.recent_status(job.id)
+
+    assert third["recent_activity"] == "Second summary after change."
+    assert len(agent.client.chat.completions.calls) == 2  # type: ignore[attr-defined]
+
+    agent.background_store.save_context(
+        job.id,
+        [
+            {"role": "assistant", "content": "Wrote index.html."},
+            {"role": "tool", "content": "Read it back."},
+        ],
+    )
+    fourth = await agent.background_tasks.recent_status(job.id)
+
+    assert fourth["recent_activity"] == "Third summary after context change."
+    assert len(agent.client.chat.completions.calls) == 3  # type: ignore[attr-defined]
 
 
 def test_subagent_dashboard_yaml_is_human_readable() -> None:
@@ -545,17 +593,21 @@ def test_subagent_dashboard_yaml_is_human_readable() -> None:
         [
             {
                 "job_id": "bg_test",
-                "title": "Test Worker",
                 "model": "claude",
                 "status": "running",
                 "elapsed": "1m 2s",
                 "steps": 3,
                 "model_calls": 4,
-                "tokens": "1234",
+                "tokens": {"prompt": 1000, "completion": 234, "total": 1234},
                 "tool_calls": 2,
                 "suspicious_completion": False,
                 "flags": ["none"],
-                "recent_activity": "Done: wrote file. Now: testing.",
+                "recent_activity": [
+                    {
+                        "time": "2026-06-24 03:12:04 UTC",
+                        "message": "Wrote file. Now testing.",
+                    }
+                ],
             }
         ],
         limit=10,
@@ -565,13 +617,18 @@ def test_subagent_dashboard_yaml_is_human_readable() -> None:
     assert "background_agents:" in yaml
     assert "status_filter: running" in yaml
     assert "- job_id: bg_test" in yaml
-    assert "recent_activity: >-" in yaml
+    assert "prompt: 1000" in yaml
+    assert "completion: 234" in yaml
+    assert "total: 1234" in yaml
+    assert "recent_activity:" in yaml
+    assert '- time: "2026-06-24 03:12:04 UTC"' in yaml
+    assert "message: Wrote file. Now testing." in yaml
 
 
 @pytest.mark.asyncio
 async def test_subagent_summary_falls_back_when_flash_fails(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a status page", "status page", "background_jobs/test")
+    job = agent.background_store.create_job("make a status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.add_event(job.id, "tool_call", "write: ok")
 
@@ -589,7 +646,7 @@ async def test_subagent_summary_falls_back_when_flash_fails(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_subagent_send_reaches_running_worker_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.enqueue_message(job.id, "Change the background from light to dark.")
     agent.client = FakeClient([FakeResponse(FinalMessage("Changed to dark."))])  # type: ignore[assignment]
@@ -604,7 +661,7 @@ async def test_subagent_send_reaches_running_worker_context(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_subagent_ask_uses_no_tool_exact_context(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "background_jobs/test")
     agent.background_store.save_context(
         job.id,
         [
@@ -624,7 +681,7 @@ async def test_subagent_ask_uses_no_tool_exact_context(tmp_path: Path) -> None:
 
 def test_background_store_marks_active_jobs_interrupted_on_restart(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    job = agent.background_store.create_job("long job", "long", "background_jobs/test")
+    job = agent.background_store.create_job("long job", "background_jobs/test")
     agent.background_store.start_job(job.id)
 
     restarted = _agent(tmp_path)
@@ -728,7 +785,7 @@ def _agent(tmp_path: Path) -> CodingAgent:
             agent_workspace=tmp_path / "workspace",
             memory_db_path=tmp_path / "memory.sqlite3",
             runtime_config_db_path=tmp_path / "runtime.sqlite3",
-            self_improvement_db_path=tmp_path / "self.sqlite3",
+            event_hooks_db_path=tmp_path / "hooks.sqlite3",
             cron_db_path=tmp_path / "cron.sqlite3",
             shell_audit_db_path=tmp_path / "exec.sqlite3",
             background_tasks_db_path=tmp_path / "background.sqlite3",

@@ -53,17 +53,14 @@ Clone and install the app as the `pebble` user:
 
 ```bash
 sudo -iu pebble
-git clone https://github.com/Infiputer/pebble-shell.git /opt/pebble-shell
+git clone https://github.com/randomvibecoder/pebble-shell.git /opt/pebble-shell
 cd /opt/pebble-shell
 python3 -m venv .venv
 . .venv/bin/activate
 pip install --upgrade pip
 pip install -e .
-python -m playwright install --with-deps chromium
 exit
 ```
-
-`playwright install --with-deps` may ask for sudo to install browser system dependencies. Run it from the venv after the package install.
 
 ## Configure Environment
 
@@ -95,7 +92,7 @@ APP_PORT=8080
 AGENT_WORKSPACE=/var/lib/pebble-shell/workspace
 MEMORY_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/memory.sqlite3
 RUNTIME_CONFIG_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/runtime_config.sqlite3
-SELF_IMPROVEMENT_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/self_improvement.sqlite3
+EVENT_HOOKS_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/event_hooks.sqlite3
 CRON_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/cron.sqlite3
 SHELL_AUDIT_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/shell_audit.sqlite3
 BACKGROUND_TASKS_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/background_tasks.sqlite3

@@ -21,7 +21,7 @@ docker compose version
 Clone the repository and create a local environment file:
 
 ```bash
-git clone https://github.com/Infiputer/pebble-shell.git
+git clone https://github.com/randomvibecoder/pebble-shell.git
 cd pebble-shell
 cp .env.example .env
 ```

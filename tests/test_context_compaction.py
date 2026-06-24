@@ -140,7 +140,7 @@ async def test_background_worker_persists_summary_and_notifies_after_context_err
         delivered.append(text)
 
     agent.set_deliver(deliver)
-    job = agent.background_store.create_job("make a page", "page", "background_jobs/test")
+    job = agent.background_store.create_job("make a page", "background_jobs/test")
     (agent.settings.agent_workspace / job.folder).mkdir(parents=True)
     agent.client = FakeClient(
         [
@@ -253,7 +253,7 @@ def _agent(tmp_path: Path) -> CodingAgent:
             agent_workspace=tmp_path / "workspace",
             memory_db_path=tmp_path / "memory.sqlite3",
             runtime_config_db_path=tmp_path / "runtime.sqlite3",
-            self_improvement_db_path=tmp_path / "self.sqlite3",
+            event_hooks_db_path=tmp_path / "hooks.sqlite3",
             cron_db_path=tmp_path / "cron.sqlite3",
             shell_audit_db_path=tmp_path / "exec.sqlite3",
             background_tasks_db_path=tmp_path / "background.sqlite3",

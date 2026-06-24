@@ -22,10 +22,12 @@ PAUSED_STATUSES = ("paused", "blocked")
 TERMINAL_STATUSES = ("completed", "canceled")
 RESUMABLE_STATUSES = ("paused", "blocked", "completed")
 MESSAGEABLE_STATUSES = ("running", "pausing", "paused", "blocked", "completed")
+DASHBOARD_RECENT_ACTIVITY_LIMIT = 5
 JOB_SELECT_COLUMNS = """
-    id, title, prompt, folder, status, steps, result, error,
+    id, prompt, folder, status, steps, result, error,
     created_at, updated_at, started_at, finished_at, model_calls, prompt_tokens,
-    completion_tokens, total_tokens, last_model, self_check_retries, attention_summary
+    completion_tokens, total_tokens, last_model, self_check_retries, attention_summary,
+    status_summary, status_summary_source, status_summary_event_id, status_summary_context_len
 """
 SELF_CHECK_PROMPT = (
     "Did you verify that the original task has been completed?\n"
@@ -42,7 +44,6 @@ MAX_SELF_CHECK_RETRIES = 3
 @dataclass(slots=True)
 class BackgroundJob:
     id: str
-    title: str
     prompt: str
     folder: str
     status: str
@@ -60,6 +61,10 @@ class BackgroundJob:
     last_model: str
     self_check_retries: int
     attention_summary: str
+    status_summary: str
+    status_summary_source: str
+    status_summary_event_id: int
+    status_summary_context_len: int
 
 
 class BackgroundTaskStore:
@@ -69,17 +74,17 @@ class BackgroundTaskStore:
         self._init_db()
         self.interrupt_running_jobs()
 
-    def create_job(self, prompt: str, title: str, folder: str) -> BackgroundJob:
+    def create_job(self, prompt: str, folder: str) -> BackgroundJob:
         job_id = _new_job_id()
         now = time.time()
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into background_jobs(id, title, prompt, folder, status, steps, result, error,
+                insert into background_jobs(id, prompt, folder, status, steps, result, error,
                                             created_at, updated_at)
-                values (?, ?, ?, ?, 'running', 0, '', '', ?, ?)
+                values (?, ?, ?, 'running', 0, '', '', ?, ?)
                 """,
-                (job_id, title.strip() or prompt.strip()[:80] or job_id, prompt.strip(), folder, now, now),
+                (job_id, prompt.strip(), folder, now, now),
             )
         self.add_event(job_id, "running", "Background worker created and scheduled.")
         job = self.get_job(job_id)
@@ -208,7 +213,7 @@ class BackgroundTaskStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select kind, message, payload, created_at
+                select id, kind, message, payload, created_at
                 from background_events
                 where job_id = ?
                 order by id desc
@@ -218,10 +223,11 @@ class BackgroundTaskStore:
             ).fetchall()
         return [
             {
-                "kind": row[0],
-                "message": row[1],
-                "payload": json.loads(row[2] or "{}"),
-                "created_at": row[3],
+                "id": row[0],
+                "kind": row[1],
+                "message": row[2],
+                "payload": json.loads(row[3] or "{}"),
+                "created_at": row[4],
             }
             for row in rows
         ]
@@ -300,6 +306,29 @@ class BackgroundTaskStore:
         with self._connect() as conn:
             row = conn.execute("select summary from background_jobs where id = ?", (job_id,)).fetchone()
         return str(row[0] or "") if row else ""
+
+    def set_status_summary(
+        self,
+        job_id: str,
+        summary: str,
+        source: str,
+        latest_event_id: int,
+        context_len: int,
+    ) -> None:
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                update background_jobs
+                set status_summary = ?,
+                    status_summary_source = ?,
+                    status_summary_event_id = ?,
+                    status_summary_context_len = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (summary, source, latest_event_id, context_len, now, job_id),
+            )
 
     def get_context(self, job_id: str) -> list[dict[str, object]]:
         with self._connect() as conn:
@@ -393,7 +422,6 @@ class BackgroundTaskStore:
                 """
                 create table if not exists background_jobs (
                     id text primary key,
-                    title text not null,
                     prompt text not null,
                     folder text not null,
                     status text not null,
@@ -403,17 +431,21 @@ class BackgroundTaskStore:
                     summary text not null default '',
                     context_json text not null default '[]',
                     created_at real not null,
-	                    updated_at real not null,
-	                    started_at real,
-	                    finished_at real,
-	                    model_calls integer not null default 0,
-	                    prompt_tokens integer,
-	                    completion_tokens integer,
-	                    total_tokens integer,
-	                    last_model text not null default '',
-	                    self_check_retries integer not null default 0,
-	                    attention_summary text not null default ''
-	                );
+                    updated_at real not null,
+                    started_at real,
+                    finished_at real,
+                    model_calls integer not null default 0,
+                    prompt_tokens integer,
+                    completion_tokens integer,
+                    total_tokens integer,
+                    last_model text not null default '',
+                    self_check_retries integer not null default 0,
+                    attention_summary text not null default '',
+                    status_summary text not null default '',
+                    status_summary_source text not null default '',
+                    status_summary_event_id integer not null default 0,
+                    status_summary_context_len integer not null default 0
+                );
 
                 create table if not exists background_events (
                     id integer primary key autoincrement,
@@ -437,21 +469,6 @@ class BackgroundTaskStore:
                 create index if not exists idx_background_messages_job on background_messages(job_id, id);
                 """
             )
-            columns = {row["name"] for row in conn.execute("pragma table_info(background_jobs)").fetchall()}
-            if "summary" not in columns:
-                conn.execute("alter table background_jobs add column summary text not null default ''")
-            migrations = {
-                "model_calls": "alter table background_jobs add column model_calls integer not null default 0",
-                "prompt_tokens": "alter table background_jobs add column prompt_tokens integer",
-                "completion_tokens": "alter table background_jobs add column completion_tokens integer",
-                "total_tokens": "alter table background_jobs add column total_tokens integer",
-                "last_model": "alter table background_jobs add column last_model text not null default ''",
-                "self_check_retries": "alter table background_jobs add column self_check_retries integer not null default 0",
-                "attention_summary": "alter table background_jobs add column attention_summary text not null default ''",
-            }
-            for column, statement in migrations.items():
-                if column not in columns:
-                    conn.execute(statement)
 
 
 class BackgroundTaskService:
@@ -478,8 +495,7 @@ class BackgroundTaskService:
         loop = self._loop
         if loop is None or loop.is_closed():
             return ToolResult(ok=False, output="Background task runner is not attached to a running event loop")
-        title = prompt[:80]
-        job = self.store.create_job(prompt, title, folder)
+        job = self.store.create_job(prompt, folder)
         (self.agent.settings.agent_workspace / folder).mkdir(parents=True, exist_ok=True)
         self._schedule_job(job.id)
         self._notify_created(job.id, folder, prompt)
@@ -522,9 +538,9 @@ class BackgroundTaskService:
             job = self.store.get_job(str(item["id"]))
             if not job:
                 continue
-            events = self.store.list_events(job.id, limit=20)
-            rows.append(_status_row(job, events, _fallback_recent_activity(job, events)))
-        return {"markdown": _render_status_table(rows), "jobs": rows}
+            events = self.store.list_events(job.id, limit=DASHBOARD_RECENT_ACTIVITY_LIMIT)
+            rows.append(_status_row(job, events, _recent_activity_events(events)))
+        return {"jobs": rows}
 
     def recent_status_tool(self, job_id: str) -> ToolResult:
         loop = self._loop
@@ -538,12 +554,24 @@ class BackgroundTaskService:
         if not job:
             raise ValueError(f"Unknown background job: {job_id}")
         events = self.store.list_events(job.id, limit=20)
-        try:
-            activity = await self._summarize_recent_activity(job, events)
-            source = "flash"
-        except Exception:  # noqa: BLE001 - this is an optional richer status path.
-            activity = _fallback_recent_activity(job, events)
-            source = "fallback"
+        context = self.store.get_context(job.id)
+        latest_event_id = _latest_event_id(events)
+        context_len = len(context)
+        if (
+            job.status_summary
+            and job.status_summary_event_id == latest_event_id
+            and job.status_summary_context_len == context_len
+        ):
+            activity = job.status_summary
+            source = job.status_summary_source or "cache"
+        else:
+            try:
+                activity = await self._summarize_recent_activity(job, events, context)
+                source = "flash"
+            except Exception:  # noqa: BLE001 - this is an optional richer status path.
+                activity = _fallback_recent_activity(job, events)
+                source = "fallback"
+            self.store.set_status_summary(job.id, activity, source, latest_event_id, context_len)
         row = _status_row(job, events, activity)
         row["summary_source"] = source
         row["events"] = events
@@ -619,7 +647,7 @@ class BackgroundTaskService:
             },
             {
                 "role": "user",
-                "content": f"Background job {job.id} ({job.title}) stored context:\n{json.dumps(context, ensure_ascii=False)}\n\nQuestion: {question}",
+                "content": f"Background job {job.id} stored context:\n{json.dumps(context, ensure_ascii=False)}\n\nQuestion: {question}",
             },
         ]
         try:
@@ -647,7 +675,7 @@ class BackgroundTaskService:
         response = await self.agent._chat_completion(
             messages=[
                 {"role": "system", "content": "Answer the question using only these extracted facts. No tools."},
-                {"role": "user", "content": f"Job {job.id}: {job.title}\nQuestion: {question}\n\nExtracts:\n" + "\n\n".join(extracts)},
+                {"role": "user", "content": f"Job {job.id}\nQuestion: {question}\n\nExtracts:\n" + "\n\n".join(extracts)},
             ],
             tool_choice="none",
             source=f"background:{job.id}",
@@ -674,7 +702,7 @@ class BackgroundTaskService:
                     {
                         "role": "user",
                         "content": (
-                            f"Job: {job.id}\nTitle: {job.title}\nStatus: {job.status}\nTask: {job.prompt}\n\n"
+                            f"Job: {job.id}\nStatus: {job.status}\nTask: {job.prompt}\n\n"
                             f"Recent events:\n{json.dumps(events, ensure_ascii=False)}\n\n"
                             f"Recent context:\n{json.dumps(context, ensure_ascii=False)}"
                         ),
@@ -686,32 +714,37 @@ class BackgroundTaskService:
         except Exception:  # noqa: BLE001 - attention state must not become a job failure because flash is unavailable.
             return _fallback_attention_summary(job, events)
 
-    async def _summarize_recent_activity(self, job: BackgroundJob, events: list[dict[str, Any]]) -> str:
-        context = self.store.get_context(job.id)[-12:]
+    async def _summarize_recent_activity(
+        self,
+        job: BackgroundJob,
+        events: list[dict[str, Any]],
+        context: list[dict[str, object]],
+    ) -> str:
+        recent_context = context[-12:]
         response = await self.agent._flash_completion(
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You summarize one background worker for a status table. No tools. "
-                        "Return one compact Markdown sentence in this exact shape: "
-                        "Done: <recent concrete completed work with evidence>. Now: <current focus or terminal state>. "
+                        "You summarize one background worker. No tools. "
+                        "Return one concise paragraph describing recent concrete completed work, current focus or terminal state, "
+                        "evidence, blockers, and the practical next action when relevant. "
                         "Use only provided context/events. If only startup was reported, say no concrete work is verified. "
-                        "Keep under 220 characters."
+                        "Keep under 1000 characters."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Job: {job.id}\nTitle: {job.title}\nStatus: {job.status}\nResult: {job.result[:1200]}\n"
+                        f"Job: {job.id}\nStatus: {job.status}\nResult: {job.result[:1200]}\n"
                         f"Error: {job.error[:1200]}\nRecent events:\n{json.dumps(events, ensure_ascii=False)}\n"
-                        f"Recent context:\n{json.dumps(context, ensure_ascii=False)}"
+                        f"Recent context:\n{json.dumps(recent_context, ensure_ascii=False)}"
                     ),
                 },
             ],
             tool_choice="none",
         )
-        return _single_line(response.choices[0].message.content or "")
+        return _single_line(response.choices[0].message.content or "")[:1000]
 
     def _schedule_job(self, job_id: str) -> bool:
         loop = self._loop
@@ -799,7 +832,6 @@ class BackgroundTaskService:
             f"{prefix}\n\n"
             f"Background task `{job.id}` emitted `{event}`.\n\n"
             f"{progress}"
-            f"Title: {job.title}\n"
             f"Status: {job.status}\n"
             f"Folder: {job.folder}\n"
             f"Result: {job.result[:4000] or '(none)'}\n"
@@ -835,7 +867,6 @@ def _normalize_workspace_folder(folder: str) -> str:
 def _row_to_job(row: sqlite3.Row) -> BackgroundJob:
     return BackgroundJob(
         id=row["id"],
-        title=row["title"],
         prompt=row["prompt"],
         folder=row["folder"],
         status=row["status"],
@@ -853,13 +884,16 @@ def _row_to_job(row: sqlite3.Row) -> BackgroundJob:
         last_model=row["last_model"] or "",
         self_check_retries=int(row["self_check_retries"] or 0),
         attention_summary=row["attention_summary"] or "",
+        status_summary=row["status_summary"] or "",
+        status_summary_source=row["status_summary_source"] or "",
+        status_summary_event_id=int(row["status_summary_event_id"] or 0),
+        status_summary_context_len=int(row["status_summary_context_len"] or 0),
     )
 
 
 def _job_dict(job: BackgroundJob, include_prompt: bool) -> dict[str, Any]:
     data: dict[str, Any] = {
         "id": job.id,
-        "title": job.title,
         "folder": job.folder,
         "status": job.status,
         "steps": job.steps,
@@ -882,44 +916,25 @@ def _job_dict(job: BackgroundJob, include_prompt: bool) -> dict[str, Any]:
     return data
 
 
-def _status_row(job: BackgroundJob, events: list[dict[str, Any]], recent_activity: str) -> dict[str, Any]:
+def _status_row(job: BackgroundJob, events: list[dict[str, Any]], recent_activity: object) -> dict[str, Any]:
     flags = _job_flags(job, events)
     return {
         "job_id": job.id,
-        "title": job.title,
         "model": job.last_model or "unknown",
         "status": _display_status(job),
         "elapsed": _elapsed(job),
         "steps": job.steps,
         "model_calls": job.model_calls,
-        "tokens": str(job.total_tokens) if job.total_tokens is not None else "unknown",
+        "tokens": {
+            "prompt": job.prompt_tokens,
+            "completion": job.completion_tokens,
+            "total": job.total_tokens,
+        },
         "tool_calls": sum(1 for event in events if event["kind"] == "tool_call"),
         "recent_activity": recent_activity,
         "flags": flags,
         "suspicious_completion": "early-complete" in flags,
     }
-
-
-def _render_status_table(rows: list[dict[str, Any]]) -> str:
-    header = "| job_id | model | status | elapsed | steps | tokens | recent_activity | flags |"
-    sep = "|---|---|---:|---:|---:|---:|---|---|"
-    if not rows:
-        return header + "\n" + sep + "\n"
-    lines = [header, sep]
-    for row in rows:
-        lines.append(
-            "| {job_id} | {model} | {status} | {elapsed} | {steps} | {tokens} | {recent_activity} | {flags} |".format(
-                job_id=_md_cell(str(row["job_id"])),
-                model=_md_cell(str(row["model"])),
-                status=_md_cell(str(row["status"])),
-                elapsed=_md_cell(str(row["elapsed"])),
-                steps=row["steps"],
-                tokens=_md_cell(str(row["tokens"])),
-                recent_activity=_md_cell(str(row["recent_activity"])),
-                flags=_md_cell(", ".join(row["flags"]) or "none"),
-            )
-        )
-    return "\n".join(lines)
 
 
 def _render_status_yaml(rows: list[dict[str, Any]], limit: int, status: str | None) -> str:
@@ -937,13 +952,15 @@ def _render_status_yaml(rows: list[dict[str, Any]], limit: int, status: str | No
         lines.extend(
             [
                 f"    - job_id: {_yaml_scalar(str(row['job_id']))}",
-                f"      title: {_yaml_scalar(str(row.get('title', '')))}",
                 f"      model: {_yaml_scalar(str(row['model']))}",
                 f"      status: {_yaml_scalar(str(row['status']))}",
                 f"      elapsed: {_yaml_scalar(str(row['elapsed']))}",
                 f"      steps: {int(row['steps'])}",
                 f"      model_calls: {int(row.get('model_calls', 0))}",
-                f"      tokens: {_yaml_scalar(str(row['tokens']))}",
+                "      tokens:",
+                f"        prompt: {_yaml_int_or_null((row.get('tokens') or {}).get('prompt'))}",
+                f"        completion: {_yaml_int_or_null((row.get('tokens') or {}).get('completion'))}",
+                f"        total: {_yaml_int_or_null((row.get('tokens') or {}).get('total'))}",
                 f"      tool_calls: {int(row.get('tool_calls', 0))}",
                 f"      suspicious_completion: {_yaml_bool(bool(row.get('suspicious_completion')))}",
                 "      flags:",
@@ -956,10 +973,27 @@ def _render_status_yaml(rows: list[dict[str, Any]], limit: int, status: str | No
             lines.append("        []")
         lines.extend(
             [
-                "      recent_activity: >-",
-                f"        {_single_line(str(row['recent_activity']))}",
+                "      recent_activity:",
             ]
         )
+        activity = row.get("recent_activity") or []
+        if isinstance(activity, list) and activity:
+            for event in activity:
+                lines.extend(
+                    [
+                        f"        - time: {_yaml_scalar(str(event.get('time', '')))}",
+                        f"          message: {_yaml_scalar(str(event.get('message', '')))}",
+                    ]
+                )
+        elif isinstance(activity, str) and activity:
+            lines.extend(
+                [
+                    f"        - time: null",
+                    f"          message: {_yaml_scalar(activity)}",
+                ]
+            )
+        else:
+            lines.append("        []")
     return "\n".join(lines)
 
 
@@ -976,6 +1010,10 @@ def _yaml_scalar(value: str) -> str:
 
 def _yaml_bool(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _yaml_int_or_null(value: object) -> str:
+    return "null" if value is None else str(int(value))
 
 
 def _display_status(job: BackgroundJob) -> str:
@@ -1002,11 +1040,11 @@ def _job_flags(job: BackgroundJob, events: list[dict[str, Any]]) -> list[str]:
 def _fallback_recent_activity(job: BackgroundJob, events: list[dict[str, Any]]) -> str:
     done = "no concrete work is verified"
     if job.status == "completed" and job.result:
-        done = _single_line(job.result[:120])
+        done = _single_line(job.result[:1000])
     else:
         for event in events:
             if event["kind"] in {"completed", "tool_call", "self_check", "blocked", "paused", "canceled"}:
-                done = f"{event['kind']}: {_single_line(event['message'])[:100]}"
+                done = f"{event['kind']}: {_single_line(event['message'])[:1000]}"
                 break
 
     if job.status in TERMINAL_STATUSES or job.status in PAUSED_STATUSES:
@@ -1016,6 +1054,38 @@ def _fallback_recent_activity(job: BackgroundJob, events: list[dict[str, Any]]) 
     else:
         now = job.status
     return f"Done: {done}. Now: {now}."
+
+
+def _recent_activity_events(events: list[dict[str, Any]], limit: int = DASHBOARD_RECENT_ACTIVITY_LIMIT) -> list[dict[str, str]]:
+    activity = []
+    for event in events[: max(1, limit)]:
+        activity.append(
+            {
+                "time": _format_utc_timestamp(event.get("created_at")),
+                "message": _single_line(str(event.get("message", "")))[:400],
+            }
+        )
+    return activity
+
+
+def _latest_event_id(events: list[dict[str, Any]]) -> int:
+    if not events:
+        return 0
+    try:
+        return int(events[0].get("id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _format_utc_timestamp(value: object) -> str:
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError):
+        try:
+            return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        except ValueError:
+            return ""
+    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _fallback_attention_summary(job: BackgroundJob, events: list[dict[str, Any]]) -> str:
@@ -1052,10 +1122,6 @@ def _format_duration(seconds: float) -> str:
         return f"{minutes}m {sec}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes}m"
-
-
-def _md_cell(text: str) -> str:
-    return _single_line(text).replace("|", "\\|")
 
 
 def _single_line(text: str) -> str:

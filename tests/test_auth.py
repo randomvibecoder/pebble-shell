@@ -35,12 +35,12 @@ class FakeCron:
         return [{"job_name": "daily"}]
 
 
-class FakeSelfImprovement:
+class FakeEventHook:
     def list_hooks(self) -> list[dict[str, object]]:
         return [{"name": "email", "enabled": True}]
 
     def list_records(self, limit: int = 20) -> list[dict[str, object]]:
-        return [{"kind": "skill", "name": "playwright-cli"}]
+        return [{"kind": "hook", "name": "email"}]
 
     def list_webhook_events(self, limit: int = 20) -> list[dict[str, object]]:
         return [{"name": "email", "payload": {"subject": "hello"}, "background": True}]
@@ -66,7 +66,7 @@ class FakeBackgroundStore:
 class FakeStatusAgent:
     runtime_config = FakeRuntimeConfig()
     cron = FakeCron()
-    self_improvement = FakeSelfImprovement()
+    event_hooks = FakeEventHook()
     tools = FakeTools()
     background_store = FakeBackgroundStore()
     current_model = "runtime/model"
@@ -149,7 +149,7 @@ def test_status_reports_runtime_without_secrets(monkeypatch) -> None:
     assert payload["background_tasks"]["recent"][0]["id"] == "bg_test"
     assert payload["cron"]["job_count"] == 2
     assert payload["cron"]["enabled_job_count"] == 1
-    assert payload["self_improvement"]["recent_webhook_events"][0]["name"] == "email"
+    assert payload["event_hooks"]["recent_webhook_events"][0]["name"] == "email"
     assert "should-not-leak" not in response.text
     assert "discord-secret-value" not in response.text
     assert "bot-token-value" not in response.text
