@@ -139,6 +139,7 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
     assert "Workers may install packages, CLIs, browsers, dependencies" in core_prompt
     assert "After starting a subagent, write its job id, folder, and task to context/MEMORY.md" in core_prompt
     assert "running/paused/blocked/completed worker" in core_prompt
+    assert "prefer subagent_send to reuse it for follow-up work" in core_prompt
     assert "Use subagent_delete only for destructive cleanup" in core_prompt
     assert "exec_command for shell commands" in core_prompt
     assert "write_stdin(session_id" in core_prompt
