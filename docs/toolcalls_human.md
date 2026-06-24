@@ -23,7 +23,7 @@ The `output` field is always a string. Some tools put JSON inside that string; t
 {"ok": false, "output": "<exception message>"}
 ```
 
-Paths are workspace-scoped. For foreground tools, relative paths resolve from the workspace root. For background workers, relative paths resolve from the worker folder; a leading `/` means `/workspace`, not container root.
+Paths allow parent traversal. For foreground tools, relative paths resolve from the workspace root. For background workers, relative paths resolve from the worker folder. Leading `/` starts at `/workspace`; use `..` or `/../...` to backtrack outside it.
 
 ## File And Search Tools
 
@@ -58,7 +58,6 @@ Success for an empty directory:
 Failures:
 
 ```json
-{"ok": false, "output": "Path escapes workspace: <path>"}
 {"ok": false, "output": "No such path: <path>"}
 ```
 
@@ -81,7 +80,6 @@ Success with no matches:
 Failures:
 
 ```json
-{"ok": false, "output": "Path escapes workspace: <path>"}
 {"ok": false, "output": "No such path: <path>"}
 ```
 
@@ -110,7 +108,6 @@ Success when output lines exceed `max_results`:
 Failures:
 
 ```json
-{"ok": false, "output": "Path escapes workspace: <path>"}
 {"ok": false, "output": "No such path: <path>"}
 {"ok": false, "output": "<rg stderr or rg exited N>"}
 ```
@@ -134,7 +131,6 @@ Success when truncated:
 Failures:
 
 ```json
-{"ok": false, "output": "Path escapes workspace: <path>"}
 {"ok": false, "output": "Not a file: <path>"}
 {"ok": false, "output": "Refusing to read likely binary file <relative-path> into model context. Use a purpose-built extractor/converter or shell command that returns a small text excerpt."}
 ```
@@ -149,11 +145,7 @@ Success:
 {"ok": true, "output": "Wrote <byte_count> bytes to <relative-path>"}
 ```
 
-Failure:
-
-```json
-{"ok": false, "output": "Path escapes workspace: <path>"}
-```
+This tool has no path-scope failure. Parent traversal and absolute container paths are allowed.
 
 ### `edit(path: str, old: str, new: str, replace_all: bool = false)`
 
@@ -169,7 +161,6 @@ Failures:
 
 ```json
 {"ok": false, "output": "old text cannot be empty"}
-{"ok": false, "output": "Path escapes workspace: <path>"}
 {"ok": false, "output": "Not a file: <path>"}
 {"ok": false, "output": "Refusing to edit likely binary file <relative-path>"}
 {"ok": false, "output": "old text not found in <relative-path>"}
@@ -217,7 +208,6 @@ Failures:
 
 ```json
 {"ok": false, "output": "read_image requires OPENAI_API_KEY"}
-{"ok": false, "output": "Path escapes workspace: <path>"}
 {"ok": false, "output": "Not a file: <path>"}
 {"ok": false, "output": "Unsupported image type: <suffix>"}
 {"ok": false, "output": "Image exceeds <max_bytes> bytes: <relative-path>"}
@@ -288,8 +278,6 @@ Failures:
 
 ```json
 {"ok": false, "output": "Invalid process command: <error>"}
-{"ok": false, "output": "Path escapes workspace: <workdir>"}
-{"ok": false, "output": "workdir escapes workspace: <resolved-path>"}
 {"ok": false, "output": "cmd cannot be empty"}
 ```
 
@@ -374,7 +362,6 @@ Success without sender:
 Failures:
 
 ```json
-{"ok": false, "output": "Path escapes workspace: <path>"}
 {"ok": false, "output": "Not a file: <path>"}
 {"ok": false, "output": "File exceeds <max_bytes> bytes: <relative-path>"}
 {"ok": false, "output": "File send failed for <relative-path>: <error>"}
@@ -688,7 +675,7 @@ Subagent status values include `running`, `pausing`, `paused`, `blocked`, `compl
 
 ### `subagent_start(prompt: str, folder: str)`
 
-Starts a background worker. The folder must remain inside `/workspace` and cannot contain `.`, `..`, or empty path segments.
+Starts a background worker. Relative folders resolve from `/workspace`; leading `/` starts at `/workspace`; `..` or `/../...` can backtrack outside it. Missing folders are created.
 
 Success output is a JSON object like `subagent_status`:
 
@@ -728,7 +715,6 @@ Failures:
 
 ```json
 {"ok": false, "output": "Background task folder cannot be empty"}
-{"ok": false, "output": "background task folder must stay inside /workspace and cannot contain . or .. path segments"}
 {"ok": false, "output": "Maximum active background tasks reached (<max>)"}
 ```
 

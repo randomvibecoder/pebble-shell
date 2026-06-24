@@ -56,8 +56,6 @@ class BackgroundProcessManager:
         if not command:
             raise ValueError("cmd cannot be empty")
         cwd = (workdir or self.cwd).resolve()
-        if cwd != self.root and self.root not in cwd.parents:
-            raise ValueError(f"workdir escapes workspace: {cwd}")
         cwd.mkdir(parents=True, exist_ok=True)
         executable = shell or "/bin/bash"
         session_id = self._allocate_session_id()

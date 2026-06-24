@@ -858,10 +858,7 @@ def _normalize_workspace_folder(folder: str) -> str:
     raw = folder.strip()
     if not raw:
         raise ValueError("background task folder cannot be empty")
-    normalized = Path(raw.lstrip("/"))
-    if normalized.is_absolute() or any(part in {"", ".", ".."} for part in normalized.parts):
-        raise ValueError("background task folder must stay inside /workspace and cannot contain . or .. path segments")
-    return normalized.as_posix()
+    return Path(raw.lstrip("/")).as_posix()
 
 
 def _row_to_job(row: sqlite3.Row) -> BackgroundJob:

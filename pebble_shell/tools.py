@@ -66,8 +66,6 @@ class WorkspaceTools:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.cwd = (cwd or self.root).resolve()
-        if self.cwd != self.root and self.root not in self.cwd.parents:
-            raise ValueError(f"Tool cwd escapes workspace: {self.cwd}")
         self.cwd.mkdir(parents=True, exist_ok=True)
         self.shell_timeout_seconds = shell_timeout_seconds
         self.runtime_config = runtime_config
@@ -95,7 +93,7 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "ls",
-                    "description": "List files under a workspace path. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
+                    "description": "List files under a path. Relative paths resolve from the current tool cwd; leading / starts at /workspace; .. is allowed.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -109,7 +107,7 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "glob",
-                    "description": "Find workspace files by glob pattern. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
+                    "description": "Find files by glob pattern. Relative paths resolve from the current tool cwd; leading / starts at /workspace; .. is allowed.",
                     "parameters": {
                         "type": "object",
                         "required": ["pattern"],
@@ -125,7 +123,7 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "grep",
-                    "description": "Search text files with a regex pattern. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
+                    "description": "Search text files with a regex pattern. Relative paths resolve from the current tool cwd; leading / starts at /workspace; .. is allowed.",
                     "parameters": {
                         "type": "object",
                         "required": ["pattern"],
@@ -174,12 +172,12 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "read",
-                    "description": "Read a UTF-8 text file. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
+                    "description": "Read a UTF-8 text file. Relative paths resolve from the current tool cwd; leading / starts at /workspace; .. is allowed.",
                     "parameters": {
                         "type": "object",
                         "required": ["path"],
                         "properties": {
-                            "path": {"type": "string", "description": "Workspace-relative file path."}
+                            "path": {"type": "string", "description": "File path."}
                         },
                     },
                 },
@@ -188,7 +186,7 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "write",
-                    "description": "Write UTF-8 text to a file. In a background worker, relative paths resolve from the assigned folder; leading / means /workspace.",
+                    "description": "Write UTF-8 text to a file. Relative paths resolve from the current tool cwd; leading / starts at /workspace; .. is allowed.",
                     "parameters": {
                         "type": "object",
                         "required": ["path", "content"],
@@ -608,7 +606,7 @@ class WorkspaceTools:
         if not target.exists():
             return ToolResult(ok=False, output=f"No such path: {path}")
         if target.is_file():
-            return ToolResult(ok=True, output=target.relative_to(self.root).as_posix())
+            return ToolResult(ok=True, output=_display_path(target, self.root))
 
         entries = []
         truncated = False
@@ -617,7 +615,7 @@ class WorkspaceTools:
                 truncated = True
                 break
             suffix = "/" if child.is_dir() else ""
-            entries.append(f"{child.relative_to(self.root).as_posix()}{suffix}")
+            entries.append(f"{_display_path(child, self.root)}{suffix}")
         if truncated:
             return ToolResult(ok=True, output="\n".join(entries) + f"\n[ls truncated at {limit} entries]")
         return ToolResult(ok=True, output="\n".join(entries) or "(empty)")
@@ -634,7 +632,7 @@ class WorkspaceTools:
             return ToolResult(
                 ok=False,
                 output=(
-                    f"Refusing to read likely binary file {target.relative_to(self.root)} into model context. "
+                    f"Refusing to read likely binary file {_display_path(target, self.root)} into model context. "
                     "Use a purpose-built extractor/converter or shell command that returns a small text excerpt."
                 ),
             )
@@ -660,7 +658,7 @@ class WorkspaceTools:
             return ToolResult(ok=False, output=str(exc))
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return ToolResult(ok=True, output=f"Wrote {len(content.encode('utf-8'))} bytes to {target.relative_to(self.root)}")
+        return ToolResult(ok=True, output=f"Wrote {len(content.encode('utf-8'))} bytes to {_display_path(target, self.root)}")
 
     def edit(self, path: str, old: str, new: str, replace_all: bool = False) -> ToolResult:
         if old == "":
@@ -673,17 +671,17 @@ class WorkspaceTools:
             return ToolResult(ok=False, output=f"Not a file: {path}")
         data = target.read_bytes()
         if _looks_binary(data, target.suffix):
-            return ToolResult(ok=False, output=f"Refusing to edit likely binary file {target.relative_to(self.root)}")
+            return ToolResult(ok=False, output=f"Refusing to edit likely binary file {_display_path(target, self.root)}")
         content = data.decode("utf-8", errors="replace")
         count = content.count(old)
         if count == 0:
-            return ToolResult(ok=False, output=f"old text not found in {target.relative_to(self.root)}")
+            return ToolResult(ok=False, output=f"old text not found in {_display_path(target, self.root)}")
         if count > 1 and not replace_all:
             return ToolResult(ok=False, output=f"old text occurs {count} times; set replace_all=true or provide a more specific old string")
         updated = content.replace(old, new) if replace_all else content.replace(old, new, 1)
         target.write_text(updated, encoding="utf-8")
         replacements = count if replace_all else 1
-        return ToolResult(ok=True, output=f"Edited {target.relative_to(self.root)} with {replacements} replacement(s)")
+        return ToolResult(ok=True, output=f"Edited {_display_path(target, self.root)} with {replacements} replacement(s)")
 
     def patch(self, patch: str) -> ToolResult:
         try:
@@ -710,7 +708,7 @@ class WorkspaceTools:
                         return ToolResult(ok=False, output=f"Cannot update missing file: {path}")
                     data = target.read_bytes()
                     if _looks_binary(data, target.suffix):
-                        return ToolResult(ok=False, output=f"Refusing to patch likely binary file {target.relative_to(self.root)}")
+                        return ToolResult(ok=False, output=f"Refusing to patch likely binary file {_display_path(target, self.root)}")
                     content = data.decode("utf-8", errors="replace")
                     updated = _apply_patch_hunks(content, change["hunks"], path)
                     target.write_text(updated, encoding="utf-8")
@@ -730,7 +728,7 @@ class WorkspaceTools:
             return ToolResult(ok=False, output=f"No such path: {path}")
         max_results = max(1, min(max_results, 1000))
         if base.is_file():
-            relative = base.relative_to(self.root).as_posix()
+            relative = _display_path(base, self.root)
             matches = [relative] if fnmatch.fnmatch(base.name, pattern) or fnmatch.fnmatch(relative, pattern) else []
             return ToolResult(ok=True, output="\n".join(matches) or "(no matches)")
         matches = []
@@ -738,9 +736,9 @@ class WorkspaceTools:
             if not child.is_file():
                 continue
             relative_to_base = child.relative_to(base).as_posix()
-            relative_to_root = child.relative_to(self.root).as_posix()
-            if fnmatch.fnmatch(relative_to_base, pattern) or fnmatch.fnmatch(relative_to_root, pattern):
-                matches.append(relative_to_root)
+            display = _display_path(child, self.root)
+            if fnmatch.fnmatch(relative_to_base, pattern) or fnmatch.fnmatch(display, pattern):
+                matches.append(display)
                 if len(matches) >= max_results:
                     break
         return ToolResult(ok=True, output="\n".join(matches) or "(no matches)")
@@ -774,17 +772,17 @@ class WorkspaceTools:
             return ToolResult(ok=False, output=f"Not a file: {path}")
         size = target.stat().st_size
         if size > self.max_send_file_bytes:
-            return ToolResult(ok=False, output=f"File exceeds {self.max_send_file_bytes} bytes: {target.relative_to(self.root)}")
+            return ToolResult(ok=False, output=f"File exceeds {self.max_send_file_bytes} bytes: {_display_path(target, self.root)}")
         if not self.file_sender:
-            return ToolResult(ok=True, output=f"File ready at {target.relative_to(self.root)}; no file sender is configured")
+            return ToolResult(ok=True, output=f"File ready at {_display_path(target, self.root)}; no file sender is configured")
         try:
             sent = self.file_sender(target)
         except Exception as exc:  # noqa: BLE001 - keep artifact path visible when Discord delivery is flaky.
             return ToolResult(
                 ok=False,
-                output=f"File send failed for {target.relative_to(self.root)}: {exc}",
+                output=f"File send failed for {_display_path(target, self.root)}: {exc}",
             )
-        return ToolResult(ok=True, output=sent or f"Sent {target.relative_to(self.root)} to the user")
+        return ToolResult(ok=True, output=sent or f"Sent {_display_path(target, self.root)} to the user")
 
     def send_msg(self, msg: str) -> ToolResult:
         msg = str(msg).strip()
@@ -866,7 +864,7 @@ class WorkspaceTools:
             return ToolResult(ok=False, output=f"Unsupported image type: {target.suffix or '(none)'}")
         data = target.read_bytes()
         if len(data) > self.max_inspect_image_bytes:
-            return ToolResult(ok=False, output=f"Image exceeds {self.max_inspect_image_bytes} bytes: {target.relative_to(self.root)}")
+            return ToolResult(ok=False, output=f"Image exceeds {self.max_inspect_image_bytes} bytes: {_display_path(target, self.root)}")
         content_type = mimetypes.guess_type(target.name)[0] or _image_content_type(target.suffix)
         data_url = f"data:{content_type};base64,{base64.b64encode(data).decode('ascii')}"
         client = self.vision_client or OpenAI(api_key=self.openai_api_key, base_url=self.openai_base_url)
@@ -1060,9 +1058,16 @@ class WorkspaceTools:
             target = (self.root / raw.lstrip("/")).resolve()
         else:
             target = (self.cwd / raw).resolve()
-        if target != self.root and self.root not in target.parents:
-            raise ValueError(f"Path escapes workspace: {path}")
         return target
+
+
+def _display_path(path: Path, root: Path) -> str:
+    path = path.resolve()
+    root = root.resolve()
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _looks_binary(data: bytes, suffix: str) -> bool:
@@ -1187,7 +1192,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "subagent_start",
-                    "description": "Start a write-capable background worker for long implementation, testing, research, or debugging work. The folder is required; leading / means /workspace and missing folders are created.",
+            "description": "Start a write-capable background worker for long implementation, testing, research, or debugging work. The folder is required; relative folders resolve from /workspace, leading / starts at /workspace, .. is allowed, and missing folders are created.",
                 "parameters": {
                     "type": "object",
                     "required": ["prompt", "folder"],
@@ -1348,7 +1353,7 @@ def _send_file_tool_definition() -> dict[str, Any]:
                 "type": "object",
                 "required": ["path"],
                 "properties": {
-                    "path": {"type": "string", "description": "Workspace-relative file path to send."}
+                    "path": {"type": "string", "description": "File path to send."}
                 },
             },
         },

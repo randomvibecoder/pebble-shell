@@ -7,13 +7,26 @@ from pebble_shell.memory import MemoryStore
 from pebble_shell.tools import WorkspaceTools
 
 
-def test_workspace_paths_cannot_escape(tmp_path: Path) -> None:
+def test_file_tools_allow_parent_traversal(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+    outside.write_text("outside", encoding="utf-8")
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
 
-    result = tools.read("../outside")
+    result = tools.read(f"../{outside.name}")
 
-    assert not result.ok
-    assert "escapes workspace" in result.output
+    assert result.ok
+    assert result.output == "outside"
+
+
+def test_file_tools_allow_workspace_root_backtracking(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-slash-outside.txt"
+    outside.write_text("outside from slash", encoding="utf-8")
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
+
+    result = tools.read(f"/../{outside.name}")
+
+    assert result.ok
+    assert result.output == "outside from slash"
 
 
 def test_write_read_and_list_file(tmp_path: Path) -> None:
@@ -38,7 +51,7 @@ def test_ls_glob_grep_and_worker_cwd(tmp_path: Path) -> None:
     assert tools.run("ls", {"path": "src"}).output == "project/src/app.py"
     assert tools.run("glob", {"pattern": "**/*.py"}).output == "project/src/app.py"
     assert "needle" in tools.run("grep", {"pattern": "needle"}).output
-    assert tools.run("read", {"path": "/project/src/app.py"}).output == "print('needle')\n"
+    assert tools.run("read", {"path": "src/app.py"}).output == "print('needle')\n"
 
 
 def test_old_model_tool_names_are_not_accepted(tmp_path: Path) -> None:
@@ -395,6 +408,17 @@ def test_exec_command_supports_codex_shaped_arguments(tmp_path: Path) -> None:
     assert payload["running"] is False
     assert payload["tty"] is True
     assert payload["output"].strip() == str(tmp_path / "subdir")
+
+
+def test_exec_command_allows_parent_workdir(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    tools = WorkspaceTools(workspace, shell_timeout_seconds=1)
+
+    result = tools.run("exec_command", {"cmd": "pwd", "workdir": "..", "yield_time_ms": 1000})
+
+    assert result.ok
+    assert json.loads(result.output)["output"].strip() == str(tmp_path)
 
 
 def test_old_process_tool_names_are_not_model_tools(tmp_path: Path) -> None:

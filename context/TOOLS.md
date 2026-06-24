@@ -1,6 +1,7 @@
 # TOOLS
 
 - `bash` runs inside the Docker container workspace. In a background worker, it runs from the assigned folder.
+- File and terminal workdir paths allow `..` traversal. Relative paths resolve from the current tool cwd; leading `/` starts at `/workspace`, and `/../...` can backtrack outside it.
 - Prefer CLI discovery for developer workflows: run `<tool> --help`, inspect subcommands, use `--dry-run`, `--verbose`, and `--format json` when available before committing changes.
 - Prefer small composable CLIs over loading large tool catalogs into context. Use MCP-style integrations only when governance, multi-tenant access boundaries, or non-CLI APIs justify the schema overhead.
 - bash commands run inside the Docker container and are audited. If bash output is over 50k chars, the response is truncated and the full output is saved under `/tmp/pebble_shell_tool_outputs/`.
@@ -21,7 +22,7 @@
 - `exec_command(cmd, yield_time_ms?, max_output_tokens?, workdir?, tty?, shell?, login?)` runs a shell command inside the Docker container. If it is still running after `yield_time_ms`, it returns a numeric `session_id`.
 - `write_stdin(session_id, chars?, yield_time_ms?, max_output_tokens?)` writes to or polls a running `exec_command` session. Use empty `chars` to poll recent output without writing.
 - Overlap guide: use `bash` for short blocking commands; use `exec_command` and `write_stdin` for long-running or interactive terminal sessions.
-- `subagent_start(prompt, folder)` starts one long-running background worker. `folder` is required; `/name` maps to `/workspace/name`, and missing folders are created.
+- `subagent_start(prompt, folder)` starts one long-running background worker. `folder` is required; relative folders resolve from `/workspace`, leading `/` starts at `/workspace`, `..` is allowed, and missing folders are created.
 - `subagent_dashboard` shows Pebble a readable dashboard of background workers, including elapsed time, model, token usage when available, deterministic recent activity from stored events/results, and flags. It does not call an LLM.
 - `subagent_summary(job_id)` gives a richer recent-status summary for one worker. It may call the flash model for that single worker and falls back to stored events/results if flash fails.
 - `subagent_status`, `subagent_list`, `subagent_events`, `subagent_ask`, `subagent_pause`, `subagent_send`, `subagent_cancel`, and `subagent_delete` inspect, question, pause, resume, redirect, cancel, or clean up specific workers.

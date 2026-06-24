@@ -10,7 +10,13 @@ import pytest
 
 from pebble_shell.agent import AgentResponse, CodingAgent
 from pebble_shell.config import Settings
-from pebble_shell.background_tasks import _render_status_yaml
+from pebble_shell.background_tasks import _normalize_workspace_folder, _render_status_yaml
+
+
+def test_background_folder_allows_parent_traversal() -> None:
+    assert _normalize_workspace_folder("../tmp/worker") == "../tmp/worker"
+    assert _normalize_workspace_folder("/../tmp/worker") == "../tmp/worker"
+    assert _normalize_workspace_folder("/site") == "site"
 
 
 class FakeChoice:
