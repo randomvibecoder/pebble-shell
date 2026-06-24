@@ -14,17 +14,19 @@ A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It e
 
 ## Quick Start
 
-Create `.env` from the example and add real secrets:
+Recommended local install:
 
 ```bash
 cp .env.example .env
+docker compose up -d --build
 ```
 
-Run in Docker:
+Full guides:
 
-```bash
-docker compose up --build
-```
+- [Docker installation](docs/install-docker.md)
+- [Bare-metal VPS installation](docs/install-bare-metal.md)
+
+Docker is the default deployment path. Bare metal is supported for VPS setups where you intentionally want Pebble to control the host directly.
 
 ## Discord Notes
 
@@ -95,7 +97,7 @@ The foreground can start workers with `subagent_start(prompt, folder)`, inspect 
 
 Workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`. They self-check before completion by answering exactly `COMPLETE`, `BLOCKED`, or `NEEDS_MORE_WORK`. `NEEDS_MORE_WORK` keeps the worker running up to a bounded retry cap; `BLOCKED` and repeated incomplete checks keep the job inspectable and messageable for foreground follow-up. `subagent_dashboard` and `/bg` use stored events/results only and do not call an LLM. `subagent_summary(job_id)` can call `OPENAI_FLASH_MODEL` for one richer per-worker status summary when Pebble asks for it.
 
-Each worker is assigned a required folder. A folder like `/myproject` maps to `/workspace/myproject`; missing folders are created. Relative file/search/bash/exec_command paths in a worker resolve from that assigned folder, while leading `/` in file tools means `/workspace`. Docker Compose exposes ports `8080-8085` so several background workers can run webdev tests in parallel.
+Each worker is assigned a required folder. A folder like `/myproject` maps to `/workspace/myproject`; missing folders are created. Relative file/search/bash/exec_command paths in a worker resolve from that assigned folder, while leading `/` in file tools means `/workspace`. Docker Compose exposes ports `8080-8085` and `4001` so several background workers can run webdev tests in parallel.
 
 ## Self-Improvement
 

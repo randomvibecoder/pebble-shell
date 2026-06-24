@@ -37,7 +37,7 @@ COPY --chown=agent:agent context /app/context
 COPY --chown=agent:agent pebble_shell /app/pebble_shell
 RUN pip install --no-deps .
 
-EXPOSE 8080 8081 8082 8083 8084 8085
+EXPOSE 8080 8081 8082 8083 8084 8085 4001 4002
 
 USER agent
 
