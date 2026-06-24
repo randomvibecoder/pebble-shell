@@ -15,33 +15,6 @@ def test_webhook_ack_response_includes_event_status() -> None:
     assert payload.steps == 0
 
 
-def test_public_route_serves_workspace_public_files(tmp_path, monkeypatch) -> None:
-    public_dir = tmp_path / "public" / "demo"
-    public_dir.mkdir(parents=True)
-    (public_dir / "index.html").write_text("<h1>Demo</h1>", encoding="utf-8")
-    monkeypatch.setenv("AGENT_WORKSPACE", str(tmp_path))
-    get_settings.cache_clear()
-
-    response = TestClient(app).get("/public/demo/")
-
-    assert response.status_code == 200
-    assert "<h1>Demo</h1>" in response.text
-    get_settings.cache_clear()
-
-
-def test_public_route_rejects_hidden_files(tmp_path, monkeypatch) -> None:
-    hidden_dir = tmp_path / "public" / ".secret"
-    hidden_dir.mkdir(parents=True)
-    (hidden_dir / "index.html").write_text("secret", encoding="utf-8")
-    monkeypatch.setenv("AGENT_WORKSPACE", str(tmp_path))
-    get_settings.cache_clear()
-
-    response = TestClient(app).get("/public/.secret/index.html")
-
-    assert response.status_code == 404
-    get_settings.cache_clear()
-
-
 def test_set_agent_overrides_cached_agent() -> None:
     first = object()
     second = object()

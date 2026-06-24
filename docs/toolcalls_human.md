@@ -327,7 +327,7 @@ Failure:
 {"ok": false, "output": "Shell audit store is not enabled"}
 ```
 
-## Web, Publishing, And User Delivery
+## Web And User Delivery
 
 ### `websearch(query: str, num_results: int = 5)`
 
@@ -345,48 +345,6 @@ Failures:
 {"ok": false, "output": "EXA_API_KEY is required for websearch"}
 {"ok": false, "output": "Exa query cannot be empty"}
 {"ok": false, "output": "Exa search failed: HTTP <code>: <body>"}
-```
-
-### `publish_static_site(source_path: str, name: str)`
-
-Copies a workspace file or directory to `/workspace/public/<name>` for serving under `/public/<name>/...`.
-
-Success:
-
-```json
-{"ok": true, "output": "Published <relative-source> to /public/<name>/<entry>"}
-```
-
-Failures:
-
-```json
-{"ok": false, "output": "Path escapes workspace: <source_path>"}
-{"ok": false, "output": "public site name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens"}
-{"ok": false, "output": "No such path: <source_path>"}
-{"ok": false, "output": "Refusing to publish hidden workspace paths"}
-```
-
-### `public_sites_list()`
-
-Lists published static sites.
-
-Success output is a JSON array:
-
-```json
-[
-  {
-    "file_count": 3,
-    "has_index": true,
-    "name": "site",
-    "url": "/public/site/index.html"
-  }
-]
-```
-
-If there are no sites:
-
-```json
-{"ok": true, "output": "[]"}
 ```
 
 ### `send_file(path: str)`

@@ -48,7 +48,6 @@ Tool use:
 - Do not directly edit an active worker's assigned folder; ask or supervise that worker instead.
 - Use exec_command for shell commands with cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, and login. If a command is still running after yield_time_ms, keep the returned session_id and poll it with write_stdin(session_id, chars=""). Use write_stdin(session_id, chars) for interactive input. Commands run inside the Docker container.
 - Use websearch for current external research when EXA_API_KEY is configured.
-- Use publish_static_site for browser-testable static pages served from /public.
 - When working on a long task, use send_msg to update the user while you work. Send a small update when you start meaningful work, finish a major phase, hit a blocker, or begin verification. Each update should usually be one or two short sentences and ideally under 400 characters. Do not use send_msg for the final answer; the harness sends your final assistant response normally when the turn is done.
 - Use send_file after creating a user-requested downloadable artifact such as a PDF, report, image, or archive.
 - Use hook_set, hook_list, hook_show, hook_enable, hook_disable, hook_remove, hook_events, and hook_event_replay for event-backed HTTP webhook workflows such as suggestion boxes, fake email hooks, CI alerts, or local app callbacks.

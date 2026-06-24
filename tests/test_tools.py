@@ -178,33 +178,6 @@ def test_read_truncates_large_text_files(tmp_path: Path) -> None:
     assert "sed, rg, head, tail" in result.output
 
 
-def test_publish_static_site_copies_directory_without_hidden_files(tmp_path: Path) -> None:
-    source = tmp_path / "site"
-    source.mkdir()
-    (source / "index.html").write_text("<h1>Hello</h1>", encoding="utf-8")
-    (source / ".secret").write_text("hidden", encoding="utf-8")
-    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
-
-    result = tools.publish_static_site("site", "demo")
-
-    assert result.ok
-    assert "/public/demo/index.html" in result.output
-    assert (tmp_path / "public" / "demo" / "index.html").read_text(encoding="utf-8") == "<h1>Hello</h1>"
-    assert not (tmp_path / "public" / "demo" / ".secret").exists()
-
-
-def test_publish_static_site_rejects_hidden_source(tmp_path: Path) -> None:
-    hidden = tmp_path / ".pebble_shell"
-    hidden.mkdir()
-    (hidden / "secret.txt").write_text("secret", encoding="utf-8")
-    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
-
-    result = tools.publish_static_site(".pebble_shell", "bad")
-
-    assert not result.ok
-    assert "hidden" in result.output
-
-
 def test_send_file_uses_configured_file_sender(tmp_path: Path) -> None:
     sent = []
 
@@ -291,20 +264,6 @@ def test_bash_truncates_large_output_to_tmp_file(tmp_path: Path) -> None:
     saved = result.output.split(marker, 1)[1].split(";", 1)[0]
     assert saved.startswith("/tmp/pebble_shell_tool_outputs/")
     assert Path(saved).read_text(encoding="utf-8").startswith("x" * 100)
-
-
-def test_public_sites_list_reports_published_sites(tmp_path: Path) -> None:
-    source = tmp_path / "site"
-    source.mkdir()
-    (source / "index.html").write_text("<h1>Hello</h1>", encoding="utf-8")
-    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
-    tools.publish_static_site("site", "demo")
-
-    result = tools.run("public_sites_list", {})
-
-    assert result.ok
-    sites = json.loads(result.output)
-    assert sites == [{"file_count": 1, "has_index": True, "name": "demo", "url": "/public/demo/index.html"}]
 
 
 def test_shell_runs_inside_workspace(tmp_path: Path) -> None:

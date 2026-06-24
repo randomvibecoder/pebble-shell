@@ -4,7 +4,6 @@ A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It e
 
 - `POST /discord/interactions` for signed Discord HTTP interactions.
 - `POST /webhooks/{name}` for local-only agent-created event hooks.
-- `GET /public/{path}` for published static files from `/workspace/public`.
 - `GET/POST /cron/jobs` plus `POST /cron/jobs/{name}/run` for scheduled automation.
 - `GET /status` for an authenticated runtime snapshot, including active terminal sessions.
 - Optional Discord bot gateway support when `DISCORD_BOT_TOKEN` is provided.
@@ -116,7 +115,7 @@ Webhook triggers are local-only event ingress. `POST /webhooks/{name}` records a
 
 For external apps, websites, CLIs, or APIs, have Pebble build an adapter server/script/daemon. The adapter receives the external request, calls Pebble's localhost webhook from inside the container, and exposes an adapter-specific response path such as `send.sh`, `reply_ticket.py`, `send_email.py`, or a local HTTP endpoint. If a generated backend needs to call a protected webhook, have it read `/workspace/.pebble_shell/secrets/api_auth_token` at runtime and send `Authorization: Bearer <token>`. Do not put that token in client-side browser code.
 
-For browser-testable pages, the agent can call `publish_static_site` to copy a workspace file or directory into `/workspace/public/{name}`. Published files are served by the app at `/public/{name}/...`.
+For browser-testable pages, have the agent write files in the workspace and run a dev/static server on an exposed port such as `8081` with normal shell tools.
 
 For downloadable artifacts, the agent can call `send_file` with a workspace-relative path. The active transport adapter sends the file back to the user, for example after compiling a PDF.
 

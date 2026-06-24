@@ -4,7 +4,6 @@ import base64
 import fnmatch
 import json
 import mimetypes
-import shutil
 import shlex
 import subprocess
 import time
@@ -20,7 +19,6 @@ from .shell_audit import ShellAuditStore
 from .exa_search import ExaSearchClient
 from .memory import MemoryStore
 from .process_manager import BackgroundProcessManager
-from .public_sites import list_public_sites
 from .runtime_config import RuntimeConfigStore
 from .event_hooks import EventHookStore
 
@@ -236,29 +234,6 @@ class WorkspaceTools:
                             "patch": {"type": "string", "description": "Patch text to apply."}
                         },
                     },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "publish_static_site",
-                    "description": "Publish a workspace file or directory under /public/{name} so it can be opened from the agent HTTP service.",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["source_path", "name"],
-                        "properties": {
-                            "source_path": {"type": "string", "description": "Workspace-relative file or directory to publish."},
-                            "name": {"type": "string", "description": "Public site slug, using letters, numbers, underscores, or hyphens."},
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "public_sites_list",
-                    "description": "List static sites currently published under /public.",
-                    "parameters": {"type": "object", "properties": {}},
                 },
             },
             {
@@ -526,14 +501,10 @@ class WorkspaceTools:
                 return self.edit(arguments["path"], arguments["old"], arguments["new"], bool(arguments.get("replace_all", False)))
             if name == "patch":
                 return self.patch(arguments["patch"])
-            if name == "publish_static_site":
-                return self.publish_static_site(arguments["source_path"], arguments["name"])
             if name == "send_file":
                 return self.send_file(arguments["path"])
             if name == "send_msg":
                 return self.send_msg(arguments["msg"])
-            if name == "public_sites_list":
-                return self.public_sites_list()
             if name == "bash":
                 return self.bash(arguments["command"])
             if name == "exec_command":
@@ -779,45 +750,6 @@ class WorkspaceTools:
         if len(lines) > max_results:
             output = "\n".join(lines[:max_results]) + "\n[grep results truncated]"
         return ToolResult(ok=True, output=output or "(no matches)")
-
-    def publish_static_site(self, source_path: str, name: str) -> ToolResult:
-        try:
-            source = self._resolve(source_path)
-            slug = _normalize_public_slug(name)
-        except ValueError as exc:
-            return ToolResult(ok=False, output=str(exc))
-        if not source.exists():
-            return ToolResult(ok=False, output=f"No such path: {source_path}")
-        if _contains_hidden_part(source.relative_to(self.root)):
-            return ToolResult(ok=False, output="Refusing to publish hidden workspace paths")
-
-        public_root = self.root / "public"
-        destination = public_root / slug
-        if destination.exists():
-            shutil.rmtree(destination)
-        destination.mkdir(parents=True, exist_ok=True)
-
-        if source.is_file():
-            shutil.copy2(source, destination / source.name)
-            entry = source.name
-        else:
-            for child in source.rglob("*"):
-                relative = child.relative_to(source)
-                if _contains_hidden_part(relative):
-                    continue
-                target = destination / relative
-                if child.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                elif child.is_file():
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(child, target)
-            entry = "index.html" if (destination / "index.html").is_file() else ""
-
-        public_path = f"/public/{slug}/" + entry
-        return ToolResult(ok=True, output=f"Published {source.relative_to(self.root)} to {public_path}")
-
-    def public_sites_list(self) -> ToolResult:
-        return ToolResult(ok=True, output=json.dumps(list_public_sites(self.root), sort_keys=True))
 
     def send_file(self, path: str) -> ToolResult:
         try:
@@ -1132,17 +1064,6 @@ class WorkspaceTools:
         if target != self.root and self.root not in target.parents:
             raise ValueError(f"Path escapes workspace: {path}")
         return target
-
-
-def _normalize_public_slug(name: str) -> str:
-    slug = name.strip()
-    if not slug or len(slug) > 64 or any(not (char.isalnum() or char in "-_") for char in slug):
-        raise ValueError("public site name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens")
-    return slug
-
-
-def _contains_hidden_part(path: Path) -> bool:
-    return any(part.startswith(".") for part in path.parts)
 
 
 def _looks_binary(data: bytes, suffix: str) -> bool:

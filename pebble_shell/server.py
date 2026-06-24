@@ -9,7 +9,6 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 
 from . import __version__
 from .agent import AgentResponse, CodingAgent, ImageInput
@@ -26,7 +25,6 @@ from .discord_interactions import (
     verify_discord_signature,
 )
 from .heartbeat import HeartbeatRunner
-from .public_sites import list_public_sites
 from .schemas import ChatResponse, CronEnableRequest, CronJobRequest, WebhookAcceptedResponse
 from .event_hooks import format_webhook_message
 
@@ -60,18 +58,6 @@ def set_agent(agent: CodingAgent) -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/public/{path:path}")
-async def public_file(path: str) -> FileResponse:
-    settings = get_settings()
-    public_root = (settings.agent_workspace / "public").resolve()
-    target = _resolve_public_path(public_root, path)
-    if target.is_dir():
-        target = target / "index.html"
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail="public file not found")
-    return FileResponse(target)
 
 
 @app.get("/status")
@@ -115,7 +101,6 @@ async def status(request: Request) -> dict[str, Any]:
             "api_auth_enabled": bool(settings.api_auth_token),
             "shell_policy": "all_commands_allowed_in_container",
         },
-        "public_sites": list_public_sites(settings.agent_workspace),
         "processes": agent.tools.processes.list(),
         "background_tasks": {
             "max_active": settings.max_background_tasks,
@@ -365,11 +350,3 @@ def _require_allowed_discord_user(user_id: str) -> None:
     if allowed and str(user_id) != allowed:
         raise HTTPException(status_code=403, detail="discord user is not allowed")
 
-
-def _resolve_public_path(public_root: Path, path: str) -> Path:
-    target = (public_root / path).resolve()
-    if target != public_root and public_root not in target.parents:
-        raise HTTPException(status_code=404, detail="public file not found")
-    if any(part.startswith(".") for part in target.relative_to(public_root).parts):
-        raise HTTPException(status_code=404, detail="public file not found")
-    return target
