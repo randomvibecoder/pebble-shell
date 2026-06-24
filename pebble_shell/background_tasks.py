@@ -9,12 +9,9 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .tools import ToolResult
-
-if TYPE_CHECKING:
-    from .agent import CodingAgent
 
 
 ACTIVE_STATUSES = ("running", "pausing", "cancelling")

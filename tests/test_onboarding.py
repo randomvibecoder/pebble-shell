@@ -228,7 +228,8 @@ def test_system_prompt_defines_heartbeat() -> None:
 
 
 def test_system_prompt_documents_webhook_token_file() -> None:
-    assert "/workspace/.pebble_shell/secrets/api_auth_token" in SYSTEM_PROMPT
+    assert ".pebble_shell/secrets/api_auth_token" in SYSTEM_PROMPT
+    assert "configured workspace" in SYSTEM_PROMPT
     assert "read the bearer token at runtime" in SYSTEM_PROMPT
     assert "Do not copy the token into source code" in SYSTEM_PROMPT
 

@@ -4,7 +4,6 @@ import asyncio
 import json
 import secrets
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request

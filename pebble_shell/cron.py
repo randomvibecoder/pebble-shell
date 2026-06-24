@@ -8,16 +8,14 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .agent import CodingAgent
+from typing import Any
 
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 DEFAULT_CRON_NOTE = "Read context/MEMORY.md and context files for handling notes for this cron job name."
 MIN_CRON_RUNS = 1
 MAX_CRON_RUNS = 500
+
 
 @dataclass(slots=True)
 class CronJob:

@@ -1,6 +1,6 @@
 # Pebble Shell
 
-A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It exposes:
+Pebble Shell is a personal coding and operations agent inspired by OpenClaw/Hermes-style workflows. It runs through Docker or directly on bare metal, talks to OpenAI-compatible model APIs, and exposes:
 
 - `POST /discord/interactions` for signed Discord HTTP interactions.
 - `POST /webhooks/{name}` for local-only agent-created event hooks.
@@ -13,19 +13,26 @@ A Docker-isolated coding agent inspired by OpenClaw/Hermes-style workflows. It e
 
 ## Quick Start
 
-Recommended local install:
+Docker quick start:
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
+Bare-metal quick start:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomvibecoder/pebble-shell/main/install | bash
+pebble serve
+```
+
 Full guides:
 
 - [Docker installation](docs/install-docker.md)
-- [Bare-metal VPS installation](docs/install-bare-metal.md)
+- [Bare-metal installation](docs/install-bare-metal.md)
 
-Docker is the default deployment path. Bare metal is supported for VPS setups where you intentionally want Pebble to control the host directly.
+Docker is the safer default for local development. Bare metal is useful on a VPS when you intentionally want Pebble to control the host directly.
 
 ## Discord Notes
 
@@ -38,7 +45,7 @@ There are two production paths:
 
 Discord-originated messages are restricted to `DISCORD_ALLOWED_USER_ID` when configured. Gateway messages from other users are ignored; signed HTTP interactions from other users are rejected with `403`.
 
-Gateway messages save every attachment under `/workspace/sent_attachments/{YYYY}/{MM}/{DD}/{upload_id}/...`. Non-image files append `[attached file: ...]` lines to the agent-visible message. Image files append `[attached image file: ...; already included as an image in this message, ...]` and are also passed to vision-capable OpenAI-compatible models as `image_url` message parts. PDFs and other non-image files are saved for normal workspace tool use; they are not read into model context automatically.
+Gateway messages save every attachment under `sent_attachments/{YYYY}/{MM}/{DD}/{upload_id}/...` inside the configured workspace. Non-image files append `[attached file: ...]` lines to the agent-visible message. Image files append `[attached image file: ...; already included as an image in this message, ...]` and are also passed to vision-capable OpenAI-compatible models as `image_url` message parts. PDFs and other non-image files are saved for normal workspace tool use; they are not read into model context automatically.
 
 Long agent replies are split into Discord-safe message chunks for both interaction follow-ups and gateway replies instead of being silently truncated.
 
@@ -82,21 +89,21 @@ Set `API_AUTH_TOKEN` before exposing local/admin routes. When set, these endpoin
 
 `GET /health` remains unauthenticated. `POST /discord/interactions` uses Discord Ed25519 request signatures instead of `API_AUTH_TOKEN`.
 
-When `API_AUTH_TOKEN` is configured, Pebble writes the token inside the container to `/workspace/.pebble_shell/secrets/api_auth_token` with `0600` permissions. Agent-built backend servers or scripts should read that file at runtime when they need to call Pebble's protected local HTTP API. Do not copy the token into source files, browser JavaScript, logs, replies, or context files.
+When `API_AUTH_TOKEN` is configured, Pebble writes the token to `.pebble_shell/secrets/api_auth_token` inside the configured workspace with `0600` permissions. Agent-built backend servers or scripts should read that file at runtime when they need to call Pebble's protected local HTTP API. Do not copy the token into source files, browser JavaScript, logs, replies, or context files.
 
 ## Safety Model
 
-The agent process and shell tools run inside the Docker container. File and shell tools are rooted at `AGENT_WORKSPACE` (`/workspace` in Docker). Shell commands have full control inside the container, including `sudo`; Docker isolation is the host boundary.
+File and shell tools are rooted at `AGENT_WORKSPACE`. In Docker, that workspace is inside the container and Docker is the host boundary. On bare metal, Pebble has the permissions of the account running `pebble serve`, including `sudo` if that account has it.
 
-## V0.0.1 Runtime Model
+## Runtime Model
 
-V0.0.1 uses one user-facing foreground supervisor plus up to four long-running background workers. Foreground requests still serialize through a process-wide async lock so conversation state stays coherent, but background workers run outside that foreground lock.
+Pebble uses one user-facing foreground supervisor plus up to four long-running background workers. Foreground requests still serialize through a process-wide async lock so conversation state stays coherent, but background workers run outside that foreground lock.
 
 The foreground can start workers with `subagent_start(prompt, folder)`, inspect the whole pool with `subagent_dashboard`, inspect one richer summary with `subagent_summary`, inspect raw details with `subagent_status`, `subagent_list`, and `subagent_events`, ask focused questions with `subagent_ask`, pause with `subagent_pause`, send new instructions to running/paused/blocked/completed workers with `subagent_send`, request cooperative cancellation with `subagent_cancel`, and destructively clean up inactive workers with `subagent_delete`. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Workers do not have heartbeat behavior and never message the user directly; they emit internal events that wake the foreground supervisor, which decides what to tell the user.
 
 Workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`. They self-check before completion by answering exactly `COMPLETE`, `BLOCKED`, or `NEEDS_MORE_WORK`. `NEEDS_MORE_WORK` keeps the worker running up to a bounded retry cap; `BLOCKED` and repeated incomplete checks keep the job inspectable and messageable for foreground follow-up. `subagent_dashboard` and `/bg` use stored events/results only and do not call an LLM. `subagent_summary(job_id)` can call the configured model for one richer per-worker status summary when Pebble asks for it.
 
-Each worker is assigned a required folder. Relative folders resolve from `/workspace`; leading `/` starts at `/workspace`; `..` or `/../...` can backtrack outside it. Missing folders are created. Relative file/search/bash/exec_command paths in a worker resolve from that assigned folder. Docker Compose exposes ports `8080-8085` and `4001` so several background workers can run webdev tests in parallel.
+Each worker is assigned a required folder. Relative folders resolve from the configured workspace; leading `/` starts at the workspace root; `..` or `/../...` can backtrack outside it. Missing folders are created. Relative file/search/bash/exec_command paths in a worker resolve from that assigned folder. Docker Compose exposes ports `8080-8085` and `4001` so several background workers can run webdev tests in parallel.
 
 ## Event Hooks
 
@@ -112,17 +119,17 @@ These mechanisms let the agent learn workflows and connect future events without
 
 Webhook triggers are local-only event ingress. `POST /webhooks/{name}` records an event, returns an event id/status immediately, and never returns the agent's final answer. Every accepted webhook payload is recorded in the hook ledger and appears in `GET /status` as a recent webhook event with receipt, processing status, and a short result or error excerpt. Injected webhook turns include a UTC timestamp in the same `YYYY-MM-DD HH:MM:SS UTC` style as heartbeat turns.
 
-For external apps, websites, CLIs, or APIs, have Pebble build an adapter server/script/daemon. The adapter receives the external request, calls Pebble's localhost webhook from inside the container, and exposes an adapter-specific response path such as `send.sh`, `reply_ticket.py`, `send_email.py`, or a local HTTP endpoint. If a generated backend needs to call a protected webhook, have it read `/workspace/.pebble_shell/secrets/api_auth_token` at runtime and send `Authorization: Bearer <token>`. Do not put that token in client-side browser code.
+For external apps, websites, CLIs, or APIs, have Pebble build an adapter server/script/daemon. The adapter receives the external request, calls Pebble's localhost webhook, and exposes an adapter-specific response path such as `send.sh`, `reply_ticket.py`, `send_email.py`, or a local HTTP endpoint. If a generated backend needs to call a protected webhook, have it read `.pebble_shell/secrets/api_auth_token` from the workspace at runtime and send `Authorization: Bearer <token>`. Do not put that token in client-side browser code.
 
 For browser-testable pages, have the agent write files in the workspace and run a dev/static server on an exposed port such as `8081` with normal shell tools.
 
 For downloadable artifacts, the agent can call `send_file` with a workspace-relative path. The active transport adapter sends the file back to the user, for example after compiling a PDF.
 
-For dev servers and other long-running commands, use Codex-style terminal sessions. `exec_command(cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, login)` starts a command inside the Docker container and returns a `session_id` when it is still running. `write_stdin(session_id, chars, yield_time_ms, max_output_tokens)` writes to or polls that session; pass empty `chars` to poll. `GET /status` also reports active sessions so a UI or Discord command can show what is still running.
+For dev servers and other long-running commands, use Codex-style terminal sessions. `exec_command(cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, login)` starts a command and returns a `session_id` when it is still running. `write_stdin(session_id, chars, yield_time_ms, max_output_tokens)` writes to or polls that session; pass empty `chars` to poll. `GET /status` also reports active sessions so a UI or Discord command can show what is still running.
 
 ## Long-Running Operation
 
-The Docker entrypoint starts the HTTP server and the cron runner. It also starts the heartbeat runner when `DISCORD_BOT_TOKEN` is not set; if the Discord gateway bot is enabled, the bot owns heartbeat delivery so alerts can be sent back to Discord. Manual testing can still use `POST /heartbeat/run`.
+`pebble serve` and the Docker entrypoint start the HTTP server and cron runner. They also start the heartbeat runner when `DISCORD_BOT_TOKEN` is not set; if the Discord gateway bot is enabled, the bot owns heartbeat delivery so alerts can be sent back to Discord. Manual testing can still use `POST /heartbeat/run`.
 
 ## Memory
 
@@ -140,11 +147,11 @@ On first contact in the chat, the agent is prompted to ask a few lightweight que
 
 ## Tool Strategy
 
-The default integration style is CLI-first inside Docker. The agent should discover tools with `--help`, prefer dry runs and JSON output, and compose commands through normal Unix pipelines. This keeps prompt context small compared with preloading large external tool schemas. MCP-style integrations can still be added later for compliance-sensitive or multi-tenant APIs where governance is worth the extra context overhead.
+The default integration style is CLI-first. The agent should discover tools with `--help`, prefer dry runs and JSON output, and compose commands through normal Unix pipelines. This keeps prompt context small compared with preloading large external tool schemas. MCP-style integrations can still be added later for compliance-sensitive or multi-tenant APIs where governance is worth the extra context overhead.
 
 ## Shell Execution
 
-Shell commands are audited in SQLite and run inside the Docker container workspace. For v0.0.1, Pebble has full container-local shell control, including `sudo`, package installs, and piped install scripts; Docker isolation is the host boundary.
+Shell commands are audited in SQLite and run from the configured workspace. Pebble has full shell control available to the runtime account, including `sudo` when available, package installs, and piped install scripts.
 
 ## Repository Layout
 
@@ -160,4 +167,4 @@ context/
   WORKER_TOOLS.md
 ```
 
-On startup, Pebble seeds missing workspace copies under `/workspace/context/` so the agent can edit `context/MEMORY.md`, `context/HEARTBEAT.md`, and the other context files with normal workspace tools. Root `AGENTS.md` remains as repository-level guidance for coding tools that look for that conventional filename.
+On startup, Pebble seeds missing workspace copies under `context/` so the agent can edit `context/MEMORY.md`, `context/HEARTBEAT.md`, and the other context files with normal workspace tools. Root `AGENTS.md` remains as repository-level guidance for coding tools that look for that conventional filename.

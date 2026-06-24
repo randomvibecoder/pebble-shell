@@ -196,7 +196,7 @@ Failures:
 
 ### `read_image(path: str, question: str = "Describe this image.")`
 
-Inspects a local image with the configured OpenAI-compatible model chain. Supported suffixes: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`.
+Inspects a local image with the configured OpenAI-compatible model. Supported suffixes: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`.
 
 Success:
 
@@ -211,7 +211,7 @@ Failures:
 {"ok": false, "output": "Not a file: <path>"}
 {"ok": false, "output": "Unsupported image type: <suffix>"}
 {"ok": false, "output": "Image exceeds <max_bytes> bytes: <relative-path>"}
-{"ok": false, "output": "All configured OpenAI-compatible image inspection models failed: <model>: <error> | <model>: <error>"}
+{"ok": false, "output": "Image inspection model failed for <model>: <error>"}
 ```
 
 ## Shell And Process Tools
@@ -422,7 +422,7 @@ Creates or updates a local webhook hook. After creating a hook, write a note in 
 Success:
 
 ```json
-{"ok": true, "output": "Saved hook <name>; POST /webhooks/<name> records a local event and returns an event id/status immediately. It does not return the agent result. Use an adapter-specific CLI/API for replies to external systems. Write a note in context/MEMORY.md describing what to do when hook `<name>` fires. If API auth is enabled, backend callers should read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token."}
+{"ok": true, "output": "Saved hook <name>; POST /webhooks/<name> records a local event and returns an event id/status immediately. It does not return the agent result. Use an adapter-specific CLI/API for replies to external systems. Write a note in context/MEMORY.md describing what to do when hook `<name>` fires. If API auth is enabled, backend callers should read the bearer token at runtime from .pebble_shell/secrets/api_auth_token under the configured workspace."}
 ```
 
 Failures:

@@ -1,7 +1,7 @@
 [project]
 name = "pebble-shell"
 version = "0.0.1"
-description = "Docker-isolated Discord-compatible coding agent with OpenAI-compatible model support."
+description = "Personal coding and operations agent with Docker and bare-metal runtime support."
 requires-python = ">=3.11"
 dependencies = [
     "discord.py>=2.4.0",

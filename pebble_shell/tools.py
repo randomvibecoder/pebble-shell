@@ -306,7 +306,7 @@ class WorkspaceTools:
                         "Create or update a named internal localhost event hook. POST /webhooks/{name} records an event "
                         "and returns an event id/status immediately; it does not return the agent result. "
                         "After creating a hook, write a note in context/MEMORY.md describing what to do when that hook fires. "
-                        "When API auth is enabled, backend code should read /workspace/.pebble_shell/secrets/api_auth_token at runtime."
+                        "When API auth is enabled, backend code should read .pebble_shell/secrets/api_auth_token from the configured workspace at runtime."
                     ),
                     "parameters": {
                         "type": "object",
@@ -909,7 +909,7 @@ class WorkspaceTools:
                 "It does not return the agent result. Use an adapter-specific CLI/API for replies to external systems. "
                 f"Write a note in context/MEMORY.md describing what to do when hook `{name}` fires. "
                 "If API auth is enabled, backend callers should read the bearer token at runtime from "
-                "/workspace/.pebble_shell/secrets/api_auth_token."
+                ".pebble_shell/secrets/api_auth_token under the configured workspace."
             ),
         )
 
