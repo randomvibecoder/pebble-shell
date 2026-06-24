@@ -68,7 +68,7 @@ Discord client credentials can register application commands, but sending DMs re
 
 See [.env.example](.env.example). Keep real keys out of source control.
 
-`OPENAI_MODEL` is used for normal text turns, Discord image attachments, and `read_image`. Set `OPENAI_FALLBACK_MODELS` to a comma-separated list to try alternates if the primary model/provider call fails.
+`OPENAI_MODEL` is used for normal text turns, summaries, background workers, Discord image attachments, and `read_image`.
 
 Set `EXA_API_KEY` to enable the `websearch` tool for external web research.
 
@@ -94,7 +94,7 @@ V0.0.1 uses one user-facing foreground supervisor plus up to four long-running b
 
 The foreground can start workers with `subagent_start(prompt, folder)`, inspect the whole pool with `subagent_dashboard`, inspect one richer summary with `subagent_summary`, inspect raw details with `subagent_status`, `subagent_list`, and `subagent_events`, ask focused questions with `subagent_ask`, pause with `subagent_pause`, send new instructions to running/paused/blocked/completed workers with `subagent_send`, request cooperative cancellation with `subagent_cancel`, and destructively clean up inactive workers with `subagent_delete`. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Workers do not have heartbeat behavior and never message the user directly; they emit internal events that wake the foreground supervisor, which decides what to tell the user.
 
-Workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`. They self-check before completion by answering exactly `COMPLETE`, `BLOCKED`, or `NEEDS_MORE_WORK`. `NEEDS_MORE_WORK` keeps the worker running up to a bounded retry cap; `BLOCKED` and repeated incomplete checks keep the job inspectable and messageable for foreground follow-up. `subagent_dashboard` and `/bg` use stored events/results only and do not call an LLM. `subagent_summary(job_id)` can call `OPENAI_FLASH_MODEL` for one richer per-worker status summary when Pebble asks for it.
+Workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`. They self-check before completion by answering exactly `COMPLETE`, `BLOCKED`, or `NEEDS_MORE_WORK`. `NEEDS_MORE_WORK` keeps the worker running up to a bounded retry cap; `BLOCKED` and repeated incomplete checks keep the job inspectable and messageable for foreground follow-up. `subagent_dashboard` and `/bg` use stored events/results only and do not call an LLM. `subagent_summary(job_id)` can call the configured model for one richer per-worker status summary when Pebble asks for it.
 
 Each worker is assigned a required folder. Relative folders resolve from `/workspace`; leading `/` starts at `/workspace`; `..` or `/../...` can backtrack outside it. Missing folders are created. Relative file/search/bash/exec_command paths in a worker resolve from that assigned folder. Docker Compose exposes ports `8080-8085` and `4001` so several background workers can run webdev tests in parallel.
 

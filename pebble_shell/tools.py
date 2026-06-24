@@ -54,7 +54,6 @@ class WorkspaceTools:
         openai_api_key: str = "",
         openai_base_url: str = "https://nano-gpt.com/api/v1",
         openai_model: str = "claude-haiku-4-5-20251001",
-        openai_fallback_models: str = "openai/gpt-5.4",
         vision_client: Any | None = None,
         max_inspect_image_bytes: int = MAX_INSPECT_IMAGE_BYTES,
         file_sender: FileSender | None = None,
@@ -79,7 +78,6 @@ class WorkspaceTools:
         self.openai_api_key = openai_api_key
         self.openai_base_url = openai_base_url
         self.openai_model = openai_model
-        self.openai_fallback_models = openai_fallback_models
         self.vision_client = vision_client
         self.max_inspect_image_bytes = max(1, max_inspect_image_bytes)
         self.file_sender = file_sender
@@ -872,37 +870,26 @@ class WorkspaceTools:
         content_type = mimetypes.guess_type(target.name)[0] or _image_content_type(target.suffix)
         data_url = f"data:{content_type};base64,{base64.b64encode(data).decode('ascii')}"
         client = self.vision_client or OpenAI(api_key=self.openai_api_key, base_url=self.openai_base_url)
-        errors = []
-        for model in self._candidate_models():
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": question.strip() or "Describe this image."},
-                                {"type": "image_url", "image_url": {"url": data_url}},
-                            ],
-                        }
-                    ],
-                )
-                content = response.choices[0].message.content or ""
-                return ToolResult(ok=True, output=content)
-            except Exception as exc:  # noqa: BLE001 - read_image should use the configured fallback chain.
-                errors.append(f"{model}: {exc}")
-        return ToolResult(ok=False, output="All configured OpenAI-compatible image inspection models failed: " + " | ".join(errors))
+        try:
+            response = client.chat.completions.create(
+                model=self.openai_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": question.strip() or "Describe this image."},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+            )
+            content = response.choices[0].message.content or ""
+            return ToolResult(ok=True, output=content)
+        except Exception as exc:  # noqa: BLE001 - report configured model failure to the agent.
+            return ToolResult(ok=False, output=f"Image inspection model failed for {self.openai_model}: {exc}")
 
     def websearch(self, query: str, num_results: int = 5) -> ToolResult:
         return ToolResult(ok=True, output=json.dumps(self.exa.search(query, num_results), sort_keys=True))
-
-    def _candidate_models(self) -> list[str]:
-        models = [self.openai_model]
-        for model in self.openai_fallback_models.split(","):
-            model = model.strip()
-            if model and model not in models:
-                models.append(model)
-        return models
 
     def heartbeat_set(self, seconds: int) -> ToolResult:
         if not self.runtime_config:
@@ -1254,7 +1241,7 @@ def _background_tool_definitions() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "subagent_summary",
-                "description": "Get a richer recent-status summary for one background worker. This may call the flash model for that single job only and falls back to stored events/results if flash fails.",
+                "description": "Get a richer recent-status summary for one background worker. This may call the configured model for that single job only and falls back to stored events/results if the model call fails.",
                 "parameters": {
                     "type": "object",
                     "required": ["job_id"],

@@ -14,14 +14,19 @@ class Settings(BaseSettings):
     def __init__(self, **data: Any) -> None:
         if os.environ.get("PEBBLE_SHELL_DISABLE_DOTENV") == "1" and "_env_file" not in data:
             data["_env_file"] = None
+        elif "_env_file" not in data:
+            env_file = os.environ.get("PEBBLE_ENV_FILE")
+            if env_file:
+                data["_env_file"] = Path(env_file).expanduser()
+            else:
+                home_env = Path(os.environ.get("PEBBLE_HOME", "~/.pebble-shell")).expanduser() / ".env"
+                if not Path(".env").is_file() and home_env.is_file():
+                    data["_env_file"] = home_env
         super().__init__(**data)
 
     openai_base_url: str = "https://nano-gpt.com/api/v1"
     openai_api_key: str = Field(default="", repr=False)
     openai_model: str = "xiaomi/mimo-v2.5:thinking"
-    openai_fallback_models: str = "claude-haiku-4-5-20251001"
-    openai_flash_model: str = "xiaomi/mimo-v2.5:thinking"
-    openai_flash_fallback_models: str = "claude-haiku-4-5-20251001"
     openai_model_input_token_limits: str = ""
     api_auth_token: str = Field(default="", repr=False)
     api_auth_token_file: Path | None = None

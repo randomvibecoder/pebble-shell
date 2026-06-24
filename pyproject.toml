@@ -14,6 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
+pebble = "pebble_shell.cli:main"
 pebble-shell-discord-register = "pebble_shell.discord_register:main"
 pebble-shell-discord-dm = "pebble_shell.discord_dm:main"
 

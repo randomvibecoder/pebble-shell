@@ -778,7 +778,7 @@ Possible `flags` include `early-complete`, `retry-cap`, `blocked-text`, and `sta
 
 ### `subagent_summary(job_id: str)`
 
-Returns a richer one-worker status. It may call the flash model. The flash `recent_activity` is a single paragraph capped at 1000 characters. If no worker events or context changed since the previous summary, the cached paragraph is reused. If flash fails, fallback uses stored events/results.
+Returns a richer one-worker status. It may call the configured model. The model-generated `recent_activity` is a single paragraph capped at 1000 characters. If no worker events or context changed since the previous summary, the cached paragraph is reused. If the model call fails, fallback uses stored events/results.
 
 Success output is a JSON object:
 
@@ -801,7 +801,7 @@ Success output is a JSON object:
   "recent_activity": "One paragraph summary up to 1000 characters.",
   "status": "running",
   "steps": 3,
-  "summary_source": "flash",
+  "summary_source": "model",
   "suspicious_completion": false,
   "tokens": {
     "completion": 20,
@@ -812,7 +812,7 @@ Success output is a JSON object:
 }
 ```
 
-If flash fails:
+If the model call fails:
 
 ```json
 {
@@ -821,7 +821,7 @@ If flash fails:
 }
 ```
 
-If the cached summary is reused, `summary_source` is the original cached source, usually `flash` or `fallback`.
+If the cached summary is reused, `summary_source` is the original cached source, usually `model` or `fallback`.
 
 Failure:
 

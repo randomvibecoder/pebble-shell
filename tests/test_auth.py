@@ -72,10 +72,7 @@ class FakeStatusAgent:
     current_model = "runtime/model"
 
     def candidate_models(self) -> list[str]:
-        return ["runtime/model", "fallback/model"]
-
-    def flash_candidate_models(self) -> list[str]:
-        return ["flash/model", "flash/fallback"]
+        return ["runtime/model"]
 
 
 def test_chat_endpoint_is_not_exposed(monkeypatch) -> None:
@@ -136,9 +133,7 @@ def test_status_reports_runtime_without_secrets(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["agent"]["version"] == "0.0.1"
-    assert payload["model"]["current"] == "runtime/model"
-    assert payload["model"]["fallbacks"] == ["fallback/model"]
-    assert payload["model"]["flash_fallbacks"] == ["flash/model", "flash/fallback"]
+    assert payload["model"] == {"base_url": "https://nano-gpt.com/api/v1", "current": "runtime/model"}
     assert payload["heartbeat"]["every_seconds"] == 3600
     assert payload["discord"]["gateway_enabled"] is True
     assert payload["discord"]["interactions_enabled"] is True

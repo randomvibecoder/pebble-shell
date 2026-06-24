@@ -340,7 +340,7 @@ async def test_background_job_needs_attention_after_three_self_check_retries(tmp
 
 
 @pytest.mark.asyncio
-async def test_background_job_needs_attention_survives_flash_summary_failure(tmp_path: Path) -> None:
+async def test_background_job_needs_attention_survives_summary_failure(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("finish a hard task", "background_jobs/test")
     agent.client = FakeClient(
@@ -354,10 +354,10 @@ async def test_background_job_needs_attention_survives_flash_summary_failure(tmp
         ]
     )  # type: ignore[assignment]
 
-    async def fail_flash(**kwargs):
-        raise RuntimeError("flash unavailable")
+    async def fail_summary(**kwargs):
+        raise RuntimeError("summary unavailable")
 
-    agent._flash_completion = fail_flash  # type: ignore[method-assign]
+    agent._summary_completion = fail_summary  # type: ignore[method-assign]
 
     await agent.background_tasks._run_job(job.id)
 
@@ -365,7 +365,7 @@ async def test_background_job_needs_attention_survives_flash_summary_failure(tmp
     assert saved is not None
     assert saved.status == "blocked"
     assert "needs foreground attention" in saved.attention_summary
-    assert "flash" not in saved.attention_summary.lower()
+    assert "summary unavailable" not in saved.attention_summary.lower()
 
 
 @pytest.mark.asyncio
@@ -517,7 +517,7 @@ def test_old_background_tool_names_are_not_available(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_subagent_dashboard_uses_stored_activity_without_flash(tmp_path: Path) -> None:
+async def test_subagent_dashboard_uses_stored_activity_without_model_call(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
@@ -543,7 +543,7 @@ async def test_subagent_dashboard_uses_stored_activity_without_flash(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_subagent_summary_uses_flash_for_one_worker(tmp_path: Path) -> None:
+async def test_subagent_summary_uses_configured_model_for_one_worker(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
@@ -554,7 +554,7 @@ async def test_subagent_summary_uses_flash_for_one_worker(tmp_path: Path) -> Non
     status = await agent.background_tasks.recent_status(job.id)
 
     assert status["job_id"] == job.id
-    assert status["summary_source"] == "flash"
+    assert status["summary_source"] == "model"
     assert status["recent_activity"].startswith("Wrote index.html.")
     assert len(status["recent_activity"]) == 1000
     assert len(agent.client.chat.completions.calls) == 1  # type: ignore[attr-defined]
@@ -642,16 +642,16 @@ def test_subagent_dashboard_yaml_is_human_readable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subagent_summary_falls_back_when_flash_fails(tmp_path: Path) -> None:
+async def test_subagent_summary_falls_back_when_model_summary_fails(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
     job = agent.background_store.create_job("make a status page", "background_jobs/test")
     agent.background_store.start_job(job.id)
     agent.background_store.add_event(job.id, "tool_call", "write: ok")
 
-    async def fail_flash(**kwargs):
-        raise RuntimeError("flash unavailable")
+    async def fail_summary(**kwargs):
+        raise RuntimeError("summary unavailable")
 
-    agent._flash_completion = fail_flash  # type: ignore[method-assign]
+    agent._summary_completion = fail_summary  # type: ignore[method-assign]
 
     status = await agent.background_tasks.recent_status(job.id)
 

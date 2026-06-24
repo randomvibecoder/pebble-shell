@@ -82,9 +82,6 @@ async def status(request: Request) -> dict[str, Any]:
         "model": {
             "base_url": settings.openai_base_url,
             "current": agent.current_model,
-            "fallbacks": [model for model in agent.candidate_models() if model != agent.current_model],
-            "flash": settings.openai_flash_model,
-            "flash_fallbacks": [model for model in agent.flash_candidate_models() if model != settings.openai_flash_model],
         },
         "runtime_config": runtime_config,
         "heartbeat": {

@@ -567,7 +567,7 @@ class BackgroundTaskService:
         else:
             try:
                 activity = await self._summarize_recent_activity(job, events, context)
-                source = "flash"
+                source = "model"
             except Exception:  # noqa: BLE001 - this is an optional richer status path.
                 activity = _fallback_recent_activity(job, events)
                 source = "fallback"
@@ -689,7 +689,7 @@ class BackgroundTaskService:
         events = self.store.list_events(job_id, limit=30)
         context = self.store.get_context(job_id)[-20:]
         try:
-            response = await self.agent._flash_completion(
+            response = await self.agent._summary_completion(
                 messages=[
                     {
                         "role": "system",
@@ -711,7 +711,7 @@ class BackgroundTaskService:
                 tool_choice="none",
             )
             return response.choices[0].message.content or _fallback_attention_summary(job, events)
-        except Exception:  # noqa: BLE001 - attention state must not become a job failure because flash is unavailable.
+        except Exception:  # noqa: BLE001 - attention state must not become a job failure because summary failed.
             return _fallback_attention_summary(job, events)
 
     async def _summarize_recent_activity(
@@ -721,7 +721,7 @@ class BackgroundTaskService:
         context: list[dict[str, object]],
     ) -> str:
         recent_context = context[-12:]
-        response = await self.agent._flash_completion(
+        response = await self.agent._summary_completion(
             messages=[
                 {
                     "role": "system",

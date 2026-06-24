@@ -31,8 +31,7 @@ Edit `.env` and set at least:
 ```bash
 OPENAI_BASE_URL=https://nano-gpt.com/api/v1
 OPENAI_API_KEY=your-api-key
-OPENAI_MODEL=claude-haiku-4-5-20251001
-OPENAI_FALLBACK_MODELS=openai/gpt-5.4
+OPENAI_MODEL=xiaomi/mimo-v2.5:thinking
 API_AUTH_TOKEN=choose-a-local-admin-token
 ```
 

@@ -45,7 +45,7 @@ Tool use:
 - Shell commands have full control in the configured runtime environment, including `sudo` when available.
 - For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use curl through bash.
 - For rendered browser behavior and UI verification, use an installed browser automation CLI/script through bash; install one first if the workspace needs it.
-- For background work: use subagent_start(prompt, folder) to start a worker. Use subagents for tasks likely to take a long time, require many tool calls, run servers/tests, perform broad research, or continue while you stay responsive to the user. The user does not need to explicitly ask for a subagent; start one when the task shape makes background work appropriate. Workers may install packages, CLIs, browsers, dependencies, or other tools needed for their assigned work. The folder is required; relative folders resolve from /workspace, leading `/` starts at `/workspace`, `..` is allowed, and missing folders are created. After starting a subagent, write its job id, folder, and task to context/MEMORY.md so you can keep track of active and recent subagents. Use subagent_dashboard first when you need a cheap dashboard of all workers; it uses stored events/results and does not call an LLM. Use subagent_summary for a richer one-worker status summary when you need more detail about a specific worker; it may call the flash model only for that job. Use subagent_status and subagent_events for one worker's raw details; use subagent_ask for a focused question over one worker's context; use subagent_pause to pause after the current step; use subagent_send to resume or redirect a running/paused/blocked/completed worker. When a worker is already running or just completed, prefer subagent_send to reuse it for follow-up work instead of spawning a new worker; start a new subagent only when the existing worker cannot handle the task. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Use subagent_cancel to stop active work. Use subagent_delete only for destructive cleanup when an inactive worker is definitely no longer needed; it deletes that worker's records, events, queued messages, and stored context.
+- For background work: use subagent_start(prompt, folder) to start a worker. Use subagents for tasks likely to take a long time, require many tool calls, run servers/tests, perform broad research, or continue while you stay responsive to the user. The user does not need to explicitly ask for a subagent; start one when the task shape makes background work appropriate. Background workers have file, shell, terminal-session, image-inspection, and websearch tools, plus send_msg for progress updates to foreground Pebble; they do not have hooks, cron jobs, heartbeat controls, subagent tools, or direct user file sending. Workers may install packages, CLIs, browsers, dependencies, or other tools needed for their assigned work. The folder is required; relative folders resolve from /workspace, leading `/` starts at `/workspace`, `..` is allowed, and missing folders are created. After starting a subagent, write its job id, folder, and task to context/MEMORY.md so you can keep track of active and recent subagents. Use subagent_dashboard first when you need a cheap dashboard of all workers; it uses stored events/results and does not call an LLM. Use subagent_summary for a richer one-worker status summary when you need more detail about a specific worker; it may call the configured model only for that job. Use subagent_status and subagent_events for one worker's raw details; use subagent_ask for a focused question over one worker's context; use subagent_pause to pause after the current step; use subagent_send to resume or redirect a running/paused/blocked/completed worker. When a worker is already running or just completed, prefer subagent_send to reuse it for follow-up work instead of spawning a new worker; start a new subagent only when the existing worker cannot handle the task. Completed workers keep their stored context and can be reopened for follow-up fixes with the same job id and folder. Use subagent_cancel to stop active work. Use subagent_delete only for destructive cleanup when an inactive worker is definitely no longer needed; it deletes that worker's records, events, queued messages, and stored context.
 - Do not directly edit an active worker's assigned folder; ask or supervise that worker instead.
 - Use exec_command for shell commands with cmd, yield_time_ms, max_output_tokens, workdir, tty, shell, and login. If a command is still running after yield_time_ms, keep the returned session_id and poll it with write_stdin(session_id, chars=""). Use write_stdin(session_id, chars) for interactive input.
 - Use websearch for current external research when EXA_API_KEY is configured.
@@ -225,7 +225,6 @@ class CodingAgent:
             settings.openai_api_key,
             settings.openai_base_url,
             settings.openai_model,
-            settings.openai_fallback_models,
             webhook_replayer=self.schedule_hook_event_replay,
             max_inspect_image_bytes=settings.max_discord_image_bytes,
             max_send_file_bytes=settings.max_discord_send_file_bytes,
@@ -233,7 +232,7 @@ class CodingAgent:
         self.context_files = ContextFileLoader(settings.agent_workspace, bundled_root)
         self.worker_context_files = ContextFileLoader(settings.agent_workspace, bundled_root, context_files=WORKER_CONTEXT_FILES)
         self._memory_md_snapshot = self._read_memory_md()
-        self._flash_lock = asyncio.Lock()
+        self._summary_lock = asyncio.Lock()
 
     def set_deliver(self, deliver: Delivery | None) -> None:
         self._deliver = deliver
@@ -447,7 +446,6 @@ class CodingAgent:
             openai_api_key=self.settings.openai_api_key,
             openai_base_url=self.settings.openai_base_url,
             openai_model=self.settings.openai_model,
-            openai_fallback_models=self.settings.openai_fallback_models,
             max_inspect_image_bytes=self.settings.max_discord_image_bytes,
             file_sender=None,
             text_sender=self.background_tasks.progress_sender(job.id),
@@ -913,10 +911,6 @@ class CodingAgent:
             models.append(primary_model)
         if self.current_model not in models:
             models.append(self.current_model)
-        for model in self.settings.openai_fallback_models.split(","):
-            model = model.strip()
-            if model and model not in models:
-                models.append(model)
         return models
 
     async def _chat_completion(self, **kwargs: Any) -> Any:
@@ -975,41 +969,9 @@ class CodingAgent:
                 f"context_length_exceeded: estimated prompt tokens {estimated} exceed configured input cap {limit} for {model}"
             )
 
-    async def _flash_completion(self, **kwargs: Any) -> Any:
-        errors: list[str] = []
-        backoffs = [1, 2, 4]
-        async with self._flash_lock:
-            for attempt in range(len(backoffs) + 1):
-                for model in self.flash_candidate_models():
-                    try:
-                        self._raise_if_model_input_cap_exceeded(model, kwargs)
-                        response = await self.client.chat.completions.create(model=model, **kwargs)
-                        self.memory.record_model_call(
-                            "flash",
-                            model,
-                            _usage_value(response, "prompt_tokens"),
-                            _usage_value(response, "completion_tokens"),
-                            _usage_value(response, "total_tokens"),
-                            _usage_detail_value(response, "prompt_tokens_details", "cached_tokens"),
-                            _usage_detail_value(response, "completion_tokens_details", "reasoning_tokens")
-                            or _usage_value(response, "reasoning_tokens"),
-                            _usage_detail_value(response, "prompt_tokens_details", "image_tokens"),
-                        )
-                        return response
-                    except Exception as exc:  # noqa: BLE001 - fallback should preserve provider error context.
-                        self.memory.record_model_call("flash", model, error=str(exc))
-                        errors.append(f"attempt {attempt + 1} {model}: {exc}")
-                if attempt < len(backoffs):
-                    await asyncio.sleep(backoffs[attempt])
-        raise RuntimeError("All configured flash models failed: " + " | ".join(errors))
-
-    def flash_candidate_models(self) -> list[str]:
-        models = [self.settings.openai_flash_model]
-        for model in self.settings.openai_flash_fallback_models.split(","):
-            model = model.strip()
-            if model and model not in models:
-                models.append(model)
-        return models
+    async def _summary_completion(self, **kwargs: Any) -> Any:
+        async with self._summary_lock:
+            return await self._chat_completion(source="summary", **kwargs)
 
 
 def _is_context_length_error(exc: Exception) -> bool:

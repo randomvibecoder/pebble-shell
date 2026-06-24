@@ -1,41 +1,128 @@
-# Bare-Metal VPS Installation
+# Bare-Metal Installation
 
-Bare-metal installation runs Pebble Shell directly on a Linux host instead of inside Docker. Use this when you intentionally want Pebble to administer the VPS itself. Docker remains the safer default because bare metal gives Pebble host-level blast radius.
+Bare-metal installation runs Pebble Shell directly on a host instead of inside Docker. Use this when you intentionally want Pebble to administer that machine directly. Docker remains the safer default because bare metal gives Pebble host-level blast radius.
 
-This guide targets Ubuntu 24.04.
+The simple bare-metal path is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomvibecoder/pebble-shell/main/install | bash
+pebble serve
+```
+
+`pebble serve` runs Pebble in the foreground. If you close that terminal, Pebble stops. To keep it running over SSH, run `pebble serve` inside your own `tmux`, `screen`, or process manager.
 
 ## Prerequisites
 
-- Ubuntu 24.04 VPS
-- A non-root login user with sudo
+- Linux or macOS
+- `bash`, `curl`, `git`, and `python3`
 - An OpenAI-compatible API key for `OPENAI_API_KEY`
 - Optional Discord bot/application credentials
 
-Update the system and install packages:
+Ubuntu/Debian prerequisites:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y \
-  bash ca-certificates curl git jq ripgrep sudo unzip wget xz-utils \
-  python3 python3-venv python3-pip
+sudo apt-get install -y bash ca-certificates curl git python3 python3-venv python3-pip
 ```
 
-## Create the Pebble User and Directories
+macOS prerequisites:
 
-Create a dedicated user:
+```bash
+xcode-select --install
+brew install python git
+```
+
+## Install
+
+Run the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/randomvibecoder/pebble-shell/main/install | bash
+```
+
+The installer creates:
+
+```text
+~/.pebble-shell/
+  app/        # git checkout
+  venv/       # Python virtual environment
+  workspace/  # Pebble's working directory, context files, SQLite state
+  .env        # local configuration and secrets
+```
+
+It also writes a `pebble` wrapper to `~/.local/bin/pebble`.
+
+If `~/.local/bin` is not in your PATH, either add it or run:
+
+```bash
+~/.local/bin/pebble serve
+```
+
+## Configure
+
+Edit the generated env file:
+
+```bash
+nano ~/.pebble-shell/.env
+```
+
+Set at least:
+
+```text
+OPENAI_API_KEY=...
+```
+
+For Discord gateway messages, also set:
+
+```text
+DISCORD_BOT_TOKEN=...
+DISCORD_ALLOWED_USER_ID=...
+INITIAL_DM_USER_ID=...
+```
+
+Optional web search:
+
+```text
+EXA_API_KEY=...
+```
+
+## Serve
+
+Run Pebble in the foreground:
+
+```bash
+pebble serve
+```
+
+Check health from another terminal:
+
+```bash
+curl http://localhost:8080/health
+```
+
+To keep Pebble running after disconnecting from SSH, use tmux:
+
+```bash
+tmux new -s pebble
+pebble serve
+```
+
+Detach with `Ctrl-b d`, then reattach later:
+
+```bash
+tmux attach -t pebble
+```
+
+## Optional: Create a Dedicated User
+
+On a VPS, you can create a dedicated user if you do not want Pebble running as your login account:
 
 ```bash
 sudo useradd --create-home --shell /bin/bash pebble
-```
-
-Create application, configuration, and workspace directories:
-
-```bash
-sudo mkdir -p /opt/pebble-shell
-sudo mkdir -p /etc/pebble-shell
-sudo mkdir -p /var/lib/pebble-shell/workspace
-sudo chown -R pebble:pebble /opt/pebble-shell /var/lib/pebble-shell
-sudo chmod 750 /etc/pebble-shell
+sudo -iu pebble
+curl -fsSL https://raw.githubusercontent.com/randomvibecoder/pebble-shell/main/install | bash
+nano ~/.pebble-shell/.env
+pebble serve
 ```
 
 Optional full host administration:
@@ -45,84 +132,13 @@ echo 'pebble ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/pebble
 sudo chmod 0440 /etc/sudoers.d/pebble
 ```
 
-Only add passwordless sudo if you want Pebble to control the VPS. Without it, shell commands run with the `pebble` user's normal permissions.
+Only add passwordless sudo if you want Pebble to control the host. Without it, shell commands run with that user's normal permissions.
 
-## Install Pebble Shell
+## Optional: systemd Service
 
-Clone and install the app as the `pebble` user:
+Use systemd only when you want Pebble to start on boot and restart after crashes.
 
-```bash
-sudo -iu pebble
-git clone https://github.com/randomvibecoder/pebble-shell.git /opt/pebble-shell
-cd /opt/pebble-shell
-python3 -m venv .venv
-. .venv/bin/activate
-pip install --upgrade pip
-pip install -e .
-exit
-```
-
-## Configure Environment
-
-Create `/etc/pebble-shell/pebble-shell.env`:
-
-```bash
-sudo tee /etc/pebble-shell/pebble-shell.env >/dev/null <<'EOF'
-OPENAI_BASE_URL=https://nano-gpt.com/api/v1
-OPENAI_API_KEY=replace-me
-OPENAI_MODEL=claude-haiku-4-5-20251001
-OPENAI_FALLBACK_MODELS=openai/gpt-5.4
-OPENAI_FLASH_MODEL=claude-haiku-4-5-20251001
-OPENAI_FLASH_FALLBACK_MODELS=openai/gpt-5.4-nano
-
-API_AUTH_TOKEN=choose-a-local-admin-token
-EXA_API_KEY=
-EXA_BASE_URL=https://api.exa.ai
-
-DISCORD_CLIENT_ID=
-DISCORD_CLIENT_SECRET=
-DISCORD_PUBLIC_KEY=
-DISCORD_BOT_TOKEN=
-DISCORD_ALLOWED_USER_ID=
-INITIAL_DM_USER_ID=
-INITIAL_DM_MESSAGE=Hi, I'm Pebble Shell. What's your name?
-
-APP_HOST=0.0.0.0
-APP_PORT=8080
-AGENT_WORKSPACE=/var/lib/pebble-shell/workspace
-MEMORY_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/memory.sqlite3
-RUNTIME_CONFIG_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/runtime_config.sqlite3
-EVENT_HOOKS_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/event_hooks.sqlite3
-CRON_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/cron.sqlite3
-SHELL_AUDIT_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/shell_audit.sqlite3
-BACKGROUND_TASKS_DB_PATH=/var/lib/pebble-shell/workspace/.pebble_shell/background_tasks.sqlite3
-
-MAX_BACKGROUND_TASKS=4
-CRON_POLL_SECONDS=15
-RECENT_MESSAGE_LIMIT=1000
-RECENT_MESSAGE_TOKEN_BUDGET=0
-HEARTBEAT_EVERY_SECONDS=7200
-HEARTBEAT_ACK_MAX_CHARS=300
-SHELL_TIMEOUT_SECONDS=20
-MAX_AGENT_STEPS=200
-MAX_DISCORD_IMAGE_BYTES=4000000
-MAX_DISCORD_ATTACHMENT_BYTES=25000000
-MAX_DISCORD_SEND_FILE_BYTES=25000000
-DISCORD_ATTACHMENTS_DIR=sent_attachments
-EOF
-sudo chown root:pebble /etc/pebble-shell/pebble-shell.env
-sudo chmod 640 /etc/pebble-shell/pebble-shell.env
-```
-
-Edit the file and replace placeholder secrets:
-
-```bash
-sudoedit /etc/pebble-shell/pebble-shell.env
-```
-
-## Create the systemd Service
-
-Create `/etc/systemd/system/pebble-shell.service`:
+Example service for the dedicated `pebble` user:
 
 ```bash
 sudo tee /etc/systemd/system/pebble-shell.service >/dev/null <<'EOF'
@@ -135,9 +151,8 @@ Wants=network-online.target
 Type=simple
 User=pebble
 Group=pebble
-WorkingDirectory=/opt/pebble-shell
-EnvironmentFile=/etc/pebble-shell/pebble-shell.env
-ExecStart=/opt/pebble-shell/.venv/bin/python -m pebble_shell
+Environment=PEBBLE_HOME=/home/pebble/.pebble-shell
+ExecStart=/home/pebble/.local/bin/pebble serve
 Restart=always
 RestartSec=5
 
@@ -201,44 +216,34 @@ INITIAL_DM_USER_ID=...
 Register the slash command from the venv:
 
 ```bash
-sudo -iu pebble
-cd /opt/pebble-shell
-. .venv/bin/activate
 pebble-shell-discord-register --guild-id YOUR_TEST_GUILD_ID
-exit
 ```
 
 Print an invite URL:
 
 ```bash
-sudo -iu pebble /opt/pebble-shell/.venv/bin/pebble-shell-discord-register --print-invite
+pebble-shell-discord-register --print-invite
 ```
 
 ## Updating
 
+Run the installer again. It updates `~/.pebble-shell/app`, reinstalls the venv package, and keeps your existing `.env`:
+
 ```bash
-sudo systemctl stop pebble-shell
-sudo -iu pebble
-cd /opt/pebble-shell
-git pull
-. .venv/bin/activate
-pip install -e .
-exit
-sudo systemctl start pebble-shell
+curl -fsSL https://raw.githubusercontent.com/randomvibecoder/pebble-shell/main/install | bash
 ```
+
+If Pebble is running, stop and restart `pebble serve` after updating.
 
 ## Resetting State
 
 This deletes Pebble's workspace, memory, databases, uploaded files, and generated projects:
 
 ```bash
-sudo systemctl stop pebble-shell
-sudo rm -rf /var/lib/pebble-shell/workspace
-sudo mkdir -p /var/lib/pebble-shell/workspace
-sudo chown -R pebble:pebble /var/lib/pebble-shell/workspace
-sudo systemctl start pebble-shell
+rm -rf ~/.pebble-shell/workspace
+mkdir -p ~/.pebble-shell/workspace
 ```
 
 ## Safety Notes
 
-Bare metal is not Docker-isolated. If the `pebble` user has passwordless sudo, Pebble can modify the VPS. Keep backups, restrict firewall exposure, protect `/etc/pebble-shell/pebble-shell.env`, and use a dedicated VPS if you want Pebble to have full host control.
+Bare metal is not Docker-isolated. If the account running Pebble has passwordless sudo, Pebble can modify the host. Keep backups, restrict firewall exposure, protect `~/.pebble-shell/.env`, and use a dedicated VPS if you want Pebble to have full host control.
