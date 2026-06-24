@@ -175,14 +175,39 @@ def test_send_msg_is_foreground_only_tool_definition(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1)
     worker_tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, text_sender=lambda text: "sent")
 
-    foreground_names = {definition["function"]["name"] for definition in tools.definitions(include_background_tools=True)}
-    background_names = {definition["function"]["name"] for definition in tools.definitions(include_background_tools=False)}
-    worker_background_names = {definition["function"]["name"] for definition in worker_tools.definitions(include_background_tools=False)}
+    foreground = {definition["function"]["name"]: definition["function"] for definition in tools.definitions(include_background_tools=True)}
+    background = {definition["function"]["name"]: definition["function"] for definition in tools.definitions(include_background_tools=False)}
+    worker_background = {definition["function"]["name"]: definition["function"] for definition in worker_tools.definitions(include_background_tools=False)}
 
-    assert "send_msg" in foreground_names
-    assert "send_msg" not in background_names
-    assert "send_msg" in worker_background_names
-    assert "send_file" not in worker_background_names
+    assert "send_msg" in foreground
+    assert "the user" in foreground["send_msg"]["description"]
+    assert "send_msg" not in background
+    assert "send_msg" in worker_background
+    assert "foreground Pebble" in worker_background["send_msg"]["description"]
+    assert "send_file" not in worker_background
+
+
+def test_background_worker_tool_schema_excludes_orchestration_tools(tmp_path: Path) -> None:
+    tools = WorkspaceTools(tmp_path, shell_timeout_seconds=1, text_sender=lambda text: "sent")
+
+    names = {definition["function"]["name"] for definition in tools.definitions(include_background_tools=False)}
+
+    assert {"ls", "glob", "grep", "read", "write", "edit", "patch", "bash", "exec_command", "write_stdin", "read_image", "websearch", "send_msg"} <= names
+    assert not {
+        "subagent_start",
+        "subagent_dashboard",
+        "subagent_send",
+        "hook_set",
+        "hook_list",
+        "hook_events",
+        "hook_event_replay",
+        "cron_job_save",
+        "cron_list",
+        "cron_enable",
+        "heartbeat_set",
+        "send_file",
+        "shell_audit",
+    } & names
 
 
 def test_model_tools_do_not_expose_route_parameters(tmp_path: Path) -> None:
@@ -200,6 +225,8 @@ def test_model_tools_do_not_expose_route_parameters(tmp_path: Path) -> None:
     assert "channel_id" not in cron_schema["properties"]
     assert "prompt" not in cron_schema["required"]
     assert "prompt" not in cron_schema["properties"]
+    assert cron_schema["properties"]["times"]["minimum"] == 1
+    assert cron_schema["properties"]["times"]["maximum"] == 500
 
 
 def test_read_rejects_binary_files_before_model_context(tmp_path: Path) -> None:

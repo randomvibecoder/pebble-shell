@@ -99,7 +99,7 @@ async def status(request: Request) -> dict[str, Any]:
         },
         "security": {
             "api_auth_enabled": bool(settings.api_auth_token),
-            "shell_policy": "all_commands_allowed_in_container",
+            "shell_policy": "all_commands_allowed",
         },
         "processes": agent.tools.processes.list(),
         "background_tasks": {
@@ -239,6 +239,7 @@ async def cron_job_save(cron_request: CronJobRequest, request: Request) -> dict[
             cron_request.name,
             cron_request.every_seconds,
             enabled=cron_request.enabled,
+            times=cron_request.times,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

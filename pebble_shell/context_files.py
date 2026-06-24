@@ -4,15 +4,23 @@ from pathlib import Path
 
 
 CONTEXT_DIR = "context"
-CONTEXT_FILES = ("SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md")
-WORKSPACE_CONTEXT_FILES = (*CONTEXT_FILES, "HEARTBEAT.md", "MEMORY.md")
+CONTEXT_FILES = ("SOUL.md", "USER.md", "TOOLS.md")
+WORKER_CONTEXT_FILES = ("SOUL.md", "USER.md", "WORKER_TOOLS.md")
+WORKSPACE_CONTEXT_FILES = ("SOUL.md", "USER.md", "TOOLS.md", "WORKER_TOOLS.md", "HEARTBEAT.md", "MEMORY.md")
 
 
 class ContextFileLoader:
-    def __init__(self, workspace: Path, bundled_root: Path, max_chars_per_file: int = 6000) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        bundled_root: Path,
+        max_chars_per_file: int = 6000,
+        context_files: tuple[str, ...] = CONTEXT_FILES,
+    ) -> None:
         self.workspace = workspace
         self.bundled_root = bundled_root
         self.max_chars_per_file = max_chars_per_file
+        self.context_files = context_files
         self._snapshot = self._load_current()
 
     def load(self) -> list[dict[str, str]]:
@@ -23,7 +31,7 @@ class ContextFileLoader:
 
     def _load_current(self) -> list[dict[str, str]]:
         blocks = []
-        for name in CONTEXT_FILES:
+        for name in self.context_files:
             content = self._read_first(name)
             if content:
                 blocks.append({"role": "system", "content": f"{CONTEXT_DIR}/{name}:\n{content}"})

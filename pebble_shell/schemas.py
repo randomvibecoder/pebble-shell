@@ -19,6 +19,7 @@ class CronJobRequest(BaseModel):
     name: str
     every_seconds: int
     enabled: bool = True
+    times: int = 1
 
 
 class CronEnableRequest(BaseModel):

@@ -6,6 +6,7 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 DEFAULT_CRON_NOTE = "Read context/MEMORY.md and context files for handling notes for this cron job name."
+MIN_CRON_RUNS = 1
+MAX_CRON_RUNS = 500
 
 @dataclass(slots=True)
 class CronJob:
@@ -23,6 +26,7 @@ class CronJob:
     every_seconds: int
     enabled: bool
     next_run_at: float
+    remaining_runs: int
 
 
 class CronStore:
@@ -37,25 +41,30 @@ class CronStore:
         every_seconds: int,
         enabled: bool = True,
         handling_note: str = DEFAULT_CRON_NOTE,
+        times: int = 1,
     ) -> None:
         _validate_name(name)
         if every_seconds < 60:
             raise ValueError("cron every_seconds must be at least 60")
+        times = int(times)
+        if times < MIN_CRON_RUNS or times > MAX_CRON_RUNS:
+            raise ValueError("cron times must be between 1 and 500")
         handling_note = handling_note.strip() or DEFAULT_CRON_NOTE
         next_run_at = time.time() + every_seconds
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into cron_jobs(name, prompt, every_seconds, enabled, next_run_at)
-                values (?, ?, ?, ?, ?)
+                insert into cron_jobs(name, prompt, every_seconds, enabled, next_run_at, remaining_runs)
+                values (?, ?, ?, ?, ?, ?)
                 on conflict(name) do update set
                     prompt = excluded.prompt,
                     every_seconds = excluded.every_seconds,
                     enabled = excluded.enabled,
                     next_run_at = excluded.next_run_at,
+                    remaining_runs = excluded.remaining_runs,
                     updated_at = current_timestamp
                 """,
-                (name, handling_note.strip(), every_seconds, int(enabled), next_run_at),
+                (name, handling_note.strip(), every_seconds, int(enabled), next_run_at, times),
             )
 
     def set_enabled(self, name: str, enabled: bool) -> None:
@@ -70,7 +79,7 @@ class CronStore:
     def get_job(self, name: str) -> CronJob | None:
         with self._connect() as conn:
             row = conn.execute(
-                "select name, prompt, every_seconds, enabled, next_run_at from cron_jobs where name = ?",
+                "select name, prompt, every_seconds, enabled, next_run_at, remaining_runs from cron_jobs where name = ?",
                 (name,),
             ).fetchone()
         return _row_to_job(row) if row else None
@@ -80,7 +89,7 @@ class CronStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select name, prompt, every_seconds, enabled, next_run_at
+                select name, prompt, every_seconds, enabled, next_run_at, remaining_runs
                 from cron_jobs
                 where enabled = 1 and next_run_at <= ?
                 order by next_run_at asc
@@ -95,7 +104,7 @@ class CronStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select name, prompt, every_seconds, enabled, last_run_at, next_run_at, updated_at
+                select name, prompt, every_seconds, enabled, last_run_at, next_run_at, updated_at, remaining_runs
                 from cron_jobs
                 order by name
                 limit ?
@@ -111,6 +120,7 @@ class CronStore:
                 "last_run_at": row[4],
                 "next_run_at": row[5],
                 "updated_at": row[6],
+                "remaining_runs": row[7],
             }
             for row in rows
         ]
@@ -118,14 +128,20 @@ class CronStore:
     def record_run(self, job: CronJob, content: str, steps: int, ok: bool = True) -> None:
         now = time.time()
         next_run_at = now + job.every_seconds
+        remaining_runs = max(int(job.remaining_runs) - 1, 0)
+        enabled = int(job.enabled and remaining_runs > 0)
         with self._connect() as conn:
             conn.execute(
                 """
                 update cron_jobs
-                set last_run_at = ?, next_run_at = ?, updated_at = current_timestamp
+                set last_run_at = ?,
+                    next_run_at = ?,
+                    remaining_runs = ?,
+                    enabled = ?,
+                    updated_at = current_timestamp
                 where name = ?
                 """,
-                (now, next_run_at, job.name),
+                (now, next_run_at, remaining_runs, enabled, job.name),
             )
             conn.execute(
                 "insert into cron_runs(job_name, ok, steps, content) values (?, ?, ?, ?)",
@@ -162,6 +178,7 @@ class CronStore:
                     enabled integer not null default 1,
                     last_run_at real,
                     next_run_at real not null,
+                    remaining_runs integer not null default 1,
                     updated_at text not null default current_timestamp
                 );
 
@@ -175,6 +192,9 @@ class CronStore:
                 );
                 """
             )
+            columns = {row[1] for row in conn.execute("pragma table_info(cron_jobs)").fetchall()}
+            if "remaining_runs" not in columns:
+                conn.execute("alter table cron_jobs add column remaining_runs integer not null default 1")
 
 
 class CronRunner:
@@ -204,7 +224,12 @@ class CronRunner:
         job = self.store.get_job(name)
         if not job:
             raise ValueError(f"Unknown cron job: {name}")
-        content = f"Scheduled job `{job.name}` fired.\n\nJob handling note:\n{job.handling_note}"
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        content = (
+            f"This is a cron turn. The time is {timestamp}.\n\n"
+            f"Scheduled job `{job.name}` fired.\n\n"
+            f"Job handling note:\n{job.handling_note}"
+        )
         try:
             response = await self.agent.run_internal_event(content, f"cron:{job.name}")
         except Exception as exc:
@@ -223,6 +248,7 @@ def _row_to_job(row: sqlite3.Row | tuple[Any, ...]) -> CronJob:
         every_seconds=int(row[2]),
         enabled=bool(row[3]),
         next_run_at=float(row[4]),
+        remaining_runs=int(row[5]),
     )
 
 

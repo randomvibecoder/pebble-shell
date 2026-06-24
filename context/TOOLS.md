@@ -1,10 +1,10 @@
 # TOOLS
 
-- `bash` runs inside the Docker container workspace. In a background worker, it runs from the assigned folder.
+- `bash` runs in the current workspace.
 - File and terminal workdir paths allow `..` traversal. Relative paths resolve from the current tool cwd; leading `/` starts at `/workspace`, and `/../...` can backtrack outside it.
 - Prefer CLI discovery for developer workflows: run `<tool> --help`, inspect subcommands, use `--dry-run`, `--verbose`, and `--format json` when available before committing changes.
 - Prefer small composable CLIs over loading large tool catalogs into context. Use MCP-style integrations only when governance, multi-tenant access boundaries, or non-CLI APIs justify the schema overhead.
-- bash commands run inside the Docker container and are audited. If bash output is over 50k chars, the response is truncated and the full output is saved under `/tmp/pebble_shell_tool_outputs/`.
+- bash commands are audited. If bash output is over 50k chars, the response is truncated and the full output is saved under `/tmp/pebble_shell_tool_outputs/`.
 - `ls(limit?)` lists workspace files with a capped output. Use it before assuming a path exists.
 - `glob` finds workspace files by glob pattern.
 - `grep` searches text files with a regex pattern.
@@ -16,10 +16,10 @@
 - For direct text or Markdown URLs such as `https://example.com/SKILL.md`, use `curl` through `bash`.
 - For rendered browser behavior and UI verification, use an installed browser automation CLI/script through `bash`; install one first if the workspace needs it.
 - `websearch` uses the Exa API for external/current web search when `EXA_API_KEY` is configured. Prefer it over ad hoc scraping for research.
-- `send_msg` sends a brief progress update during long work. In foreground it messages the user; in a background worker it messages foreground Pebble. Use it when starting meaningful work, finishing a major phase, hitting a blocker, or beginning verification. Keep updates to one or two short sentences, ideally under 400 characters. Do not use it for the final answer; the final assistant response is sent normally when the turn ends.
+- `send_msg` sends a brief progress update to the user during long foreground work. Use it when starting meaningful work, finishing a major phase, hitting a blocker, or beginning verification. Keep updates to one or two short sentences, ideally under 400 characters. Do not use it for the final answer; the final assistant response is sent normally when the turn ends.
 - `send_file` sends a workspace file back to the user; use it for generated PDFs, reports, images, or archives.
 - Chat uploads are saved under `sent_attachments`. Inspect non-image files with normal file/bash tools when relevant. Images may already be included directly in the model message, so do not re-inspect an uploaded image path unless the user asks about the saved file later.
-- `exec_command(cmd, yield_time_ms?, max_output_tokens?, workdir?, tty?, shell?, login?)` runs a shell command inside the Docker container. If it is still running after `yield_time_ms`, it returns a numeric `session_id`.
+- `exec_command(cmd, yield_time_ms?, max_output_tokens?, workdir?, tty?, shell?, login?)` runs a shell command in a terminal session. If it is still running after `yield_time_ms`, it returns a numeric `session_id`.
 - `write_stdin(session_id, chars?, yield_time_ms?, max_output_tokens?)` writes to or polls a running `exec_command` session. Use empty `chars` to poll recent output without writing.
 - Overlap guide: use `bash` for short blocking commands; use `exec_command` and `write_stdin` for long-running or interactive terminal sessions.
 - `subagent_start(prompt, folder)` starts one long-running background worker. `folder` is required; relative folders resolve from `/workspace`, leading `/` starts at `/workspace`, `..` is allowed, and missing folders are created.
@@ -39,10 +39,11 @@
 - For hooks, use `hook_show` for one hook, `hook_list` for registered hook definitions, and `hook_events` for received webhook payloads.
 - Webhook events are local input events only, not chat/completion APIs. For any external app/API/browser integration, build a small adapter server/script/daemon that calls the local webhook, then provide Pebble a separate CLI/API for replying to that integration.
 - Webhook events are normal foreground turns in the same single linear chat as direct user messages, heartbeats, and cron turns. They do not create a separate conversation. Webhook messages, tool calls/results, `send_msg` updates, and final answers are appended to the same conversation history, subject only to normal compaction. `send_msg` is available during webhook work when a short user-visible progress update is useful, but integration replies should usually go through the adapter-specific reply command/API.
-- Protected local HTTP routes require `Authorization: Bearer <token>` when API auth is enabled. If a backend/server/script you create inside the container must call Pebble's own protected HTTP API, read the token at runtime from `/workspace/.pebble_shell/secrets/api_auth_token`. Do not hardcode it into source, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
-- `cron_job_save(name, every_seconds, enabled?)` registers interval-based scheduled work with persisted results. After creating a cron job, write a note in context/MEMORY.md describing what to do when it fires.
+- Protected local HTTP routes require `Authorization: Bearer <token>` when API auth is enabled. If a backend/server/script you create must call Pebble's own protected HTTP API, read the token at runtime from `/workspace/.pebble_shell/secrets/api_auth_token`. Do not hardcode it into source, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
+- `cron_job_save(name, every_seconds, enabled?, times?)` registers interval-based scheduled work with persisted results. `times` defaults to 1 and must be between 1 and 500. After creating a cron job, write a note in context/MEMORY.md describing what to do when it fires.
 - `cron_list(jobs_limit?, runs_limit?)` lists scheduled jobs and recent run results.
 - `cron_enable` pauses or resumes a scheduled job.
 - `shell_audit(limit?)` lists recent shell command audit records.
 - Prefer small limits on list tools and increase them only when the missing rows are needed.
 - Durable memory lives in `context/MEMORY.md`; use normal file tools such as `read`, `edit`, `write`, or `patch` to maintain it.
+- Update `context/USER.md` when you learn durable facts about the user. Update `context/SOUL.md` when the user asks you to act or communicate differently. Update `context/MEMORY.md` when starting or completing meaningful tasks, starting subagents, setting hooks or cron jobs, or recording durable project state. Update `context/HEARTBEAT.md` when the user changes heartbeat behavior.

@@ -145,7 +145,7 @@ Success:
 {"ok": true, "output": "Wrote <byte_count> bytes to <relative-path>"}
 ```
 
-This tool has no path-scope failure. Parent traversal and absolute container paths are allowed.
+This tool has no path-scope failure. Parent traversal and absolute workspace paths are allowed.
 
 ### `edit(path: str, old: str, new: str, replace_all: bool = false)`
 
@@ -309,7 +309,7 @@ Success output is a JSON array:
     "created_at": "YYYY-MM-DD HH:MM:SS",
     "exit_code": 0,
     "output": "<captured output, truncated to 4000 chars in DB>",
-    "reason": "Allowed inside Docker container",
+    "reason": "Allowed",
     "risk": "normal"
   }
 ]
@@ -562,14 +562,14 @@ Failures:
 
 ## Cron Tools
 
-### `cron_job_save(name: str, every_seconds: int, enabled: bool = true)`
+### `cron_job_save(name: str, every_seconds: int, enabled: bool = true, times: int = 1)`
 
-Creates or updates a scheduled job. `every_seconds` must be at least 60. After creating one, write a note in `context/MEMORY.md` describing what to do when that job fires.
+Creates or updates a scheduled job. `every_seconds` must be at least 60. `times` must be between 1 and 500 and defaults to 1. After creating one, write a note in `context/MEMORY.md` describing what to do when that job fires.
 
 Success:
 
 ```json
-{"ok": true, "output": "Saved cron job <name> every <every_seconds> seconds; write a note in context/MEMORY.md describing what to do when it fires"}
+{"ok": true, "output": "Saved cron job <name> every <every_seconds> seconds for <times> run(s); write a note in context/MEMORY.md describing what to do when it fires"}
 ```
 
 Failures:
@@ -578,6 +578,7 @@ Failures:
 {"ok": false, "output": "Cron store is not enabled"}
 {"ok": false, "output": "name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens"}
 {"ok": false, "output": "cron every_seconds must be at least 60"}
+{"ok": false, "output": "cron times must be between 1 and 500"}
 ```
 
 ### `cron_list(jobs_limit: int = 20, runs_limit: int = 20)`
@@ -596,6 +597,7 @@ Success output is a JSON object:
       "last_run_at": null,
       "name": "hourly",
       "next_run_at": 1710000000.0,
+      "remaining_runs": 1,
       "updated_at": "YYYY-MM-DD HH:MM:SS"
     }
   ],

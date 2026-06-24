@@ -133,10 +133,10 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
     await agent.run_user_message("hello")
 
     core_prompt = fake_client.chat.completions.calls[0]["messages"][0]["content"]
-    assert "one foreground supervisor and up to four long-running background workers" in core_prompt
+    assert "foreground orchestrator and have up to four long-running background workers" in core_prompt
     assert "subagent_start" in core_prompt
     assert "The user does not need to explicitly ask for a subagent" in core_prompt
-    assert "Subagents run inside the Docker container with container-local sudo/root capability" in core_prompt
+    assert "Workers may install packages, CLIs, browsers, dependencies" in core_prompt
     assert "After starting a subagent, write its job id, folder, and task to context/MEMORY.md" in core_prompt
     assert "running/paused/blocked/completed worker" in core_prompt
     assert "Use subagent_delete only for destructive cleanup" in core_prompt
@@ -146,6 +146,12 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
     assert "record_memory" not in core_prompt
     assert "heartbeat_set" in core_prompt
     assert "set_runtime_config" not in core_prompt
+    assert "context/USER.md" in core_prompt
+    assert "context/SOUL.md" in core_prompt
+    assert "context/HEARTBEAT.md" in core_prompt
+    assert "Docker" not in core_prompt
+    assert "container" not in core_prompt
+    assert "V0.0.1" not in core_prompt
 
 
 @pytest.mark.asyncio

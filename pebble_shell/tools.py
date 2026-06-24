@@ -239,7 +239,7 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "bash",
-                    "description": "Run a bash command inside the container. In a background worker, commands run from the assigned folder.",
+                    "description": "Run a bash command. In a background worker, commands run from the assigned folder.",
                     "parameters": {
                         "type": "object",
                         "required": ["command"],
@@ -419,6 +419,7 @@ class WorkspaceTools:
                             "name": {"type": "string"},
                             "every_seconds": {"type": "integer", "minimum": 60},
                             "enabled": {"type": "boolean"},
+                            "times": {"type": "integer", "minimum": 1, "maximum": 500},
                         },
                     },
                 },
@@ -466,10 +467,28 @@ class WorkspaceTools:
                 },
             },
         ]
-        if include_background_tools:
-            definitions.append(_send_file_tool_definition())
-        if include_background_tools or self.text_sender:
-            definitions.append(_send_msg_tool_definition())
+        if not include_background_tools:
+            worker_allowed = {
+                "ls",
+                "glob",
+                "grep",
+                "read",
+                "write",
+                "edit",
+                "patch",
+                "bash",
+                "exec_command",
+                "write_stdin",
+                "read_image",
+                "websearch",
+            }
+            definitions = [definition for definition in definitions if definition["function"]["name"] in worker_allowed]
+            if self.text_sender:
+                definitions.append(_send_msg_tool_definition("foreground Pebble"))
+            return definitions
+
+        definitions.append(_send_file_tool_definition())
+        definitions.append(_send_msg_tool_definition("the user"))
         if include_background_tools and self.background_tasks:
             definitions.extend(_background_tool_definitions())
         return definitions
@@ -545,6 +564,7 @@ class WorkspaceTools:
                     arguments["name"],
                     int(arguments["every_seconds"]),
                     arguments.get("enabled", True),
+                    int(arguments.get("times", 1)),
                 )
             if name == "cron_list":
                 return self.cron_list(int(arguments.get("jobs_limit", 20)), int(arguments.get("runs_limit", 20)))
@@ -777,7 +797,7 @@ class WorkspaceTools:
         if not self.text_sender:
             return ToolResult(ok=True, output="Progress message ready; no text sender is configured")
         sent = self.text_sender(msg)
-        return ToolResult(ok=True, output=sent or "Sent progress message to the user")
+        return ToolResult(ok=True, output=sent or "Sent progress message")
 
     def bash(self, command: str) -> ToolResult:
         try:
@@ -804,7 +824,7 @@ class WorkspaceTools:
                 + f"Full stdout/stderr saved at {full_path}; use bash commands such as sed, rg, head, tail, wc, or cat on that file to inspect specific parts.]"
             )
         if self.shell_audit_store:
-            self.shell_audit_store.record(command, completed.returncode == 0, "normal", "Allowed inside Docker container", completed.returncode, output)
+            self.shell_audit_store.record(command, completed.returncode == 0, "normal", "Allowed", completed.returncode, output)
         return ToolResult(ok=completed.returncode == 0, output=output or f"exit code {completed.returncode}")
 
     def exec_command(
@@ -951,11 +971,18 @@ class WorkspaceTools:
         name: str,
         every_seconds: int,
         enabled: bool = True,
+        times: int = 1,
     ) -> ToolResult:
         if not self.cron:
             return ToolResult(ok=False, output="Cron store is not enabled")
-        self.cron.upsert_job(name, int(every_seconds), enabled=bool(enabled))
-        return ToolResult(ok=True, output=f"Saved cron job {name} every {every_seconds} seconds; write a note in context/MEMORY.md describing what to do when it fires")
+        self.cron.upsert_job(name, int(every_seconds), enabled=bool(enabled), times=int(times))
+        return ToolResult(
+            ok=True,
+            output=(
+                f"Saved cron job {name} every {every_seconds} seconds for {int(times)} run(s); "
+                "write a note in context/MEMORY.md describing what to do when it fires"
+            ),
+        )
 
     def cron_list(self, jobs_limit: int = 20, runs_limit: int = 20) -> ToolResult:
         if not self.cron:
@@ -1336,14 +1363,14 @@ def _send_file_tool_definition() -> dict[str, Any]:
     }
 
 
-def _send_msg_tool_definition() -> dict[str, Any]:
+def _send_msg_tool_definition(recipient: str) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
             "name": "send_msg",
             "description": (
-                "Send a short progress update to the user immediately without ending the current turn. "
-                "Use sparingly during long foreground tasks. The final answer is sent normally without this tool."
+                f"Send a short progress update to {recipient} immediately without ending the current turn. "
+                "Use it during long work. The final answer is sent normally without this tool."
             ),
             "parameters": {
                 "type": "object",

@@ -152,12 +152,12 @@ Pebble-facing prompt and context files are grouped under `context/`:
 
 ```text
 context/
-  AGENTS.md
   HEARTBEAT.md
   MEMORY.md
   SOUL.md
   TOOLS.md
   USER.md
+  WORKER_TOOLS.md
 ```
 
 On startup, Pebble seeds missing workspace copies under `/workspace/context/` so the agent can edit `context/MEMORY.md`, `context/HEARTBEAT.md`, and the other context files with normal workspace tools. Root `AGENTS.md` remains as repository-level guidance for coding tools that look for that conventional filename.
