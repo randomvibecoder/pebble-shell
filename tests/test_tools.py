@@ -162,10 +162,13 @@ def test_list_tools_have_limits_and_short_names(tmp_path: Path) -> None:
     assert "jobs_limit" in definitions["cron_list"]["parameters"]["properties"]
     assert "runs_limit" in definitions["cron_list"]["parameters"]["properties"]
     assert "limit" in definitions["shell_audit"]["parameters"]["properties"]
+    assert "heartbeat_set" in definitions
 
     assert "cron_jobs_list" not in definitions
     assert "cron_job_set_enabled" not in definitions
     assert "shell_audit_recent" not in definitions
+    assert "get_runtime_config" not in definitions
+    assert "set_runtime_config" not in definitions
 
 
 def test_send_msg_is_foreground_only_tool_definition(tmp_path: Path) -> None:
@@ -191,8 +194,12 @@ def test_model_tools_do_not_expose_route_parameters(tmp_path: Path) -> None:
 
     assert "channel_id" not in webhook_schema["required"]
     assert "channel_id" not in webhook_schema["properties"]
+    assert "prompt" not in webhook_schema["required"]
+    assert "prompt" not in webhook_schema["properties"]
     assert "channel_id" not in cron_schema["required"]
     assert "channel_id" not in cron_schema["properties"]
+    assert "prompt" not in cron_schema["required"]
+    assert "prompt" not in cron_schema["properties"]
 
 
 def test_read_rejects_binary_files_before_model_context(tmp_path: Path) -> None:

@@ -14,11 +14,12 @@ if TYPE_CHECKING:
 
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+DEFAULT_CRON_NOTE = "Read context/MEMORY.md and context files for handling notes for this cron job name."
 
 @dataclass(slots=True)
 class CronJob:
     name: str
-    prompt: str
+    handling_note: str
     every_seconds: int
     enabled: bool
     next_run_at: float
@@ -30,12 +31,17 @@ class CronStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def upsert_job(self, name: str, prompt: str, every_seconds: int, enabled: bool = True) -> None:
+    def upsert_job(
+        self,
+        name: str,
+        every_seconds: int,
+        enabled: bool = True,
+        handling_note: str = DEFAULT_CRON_NOTE,
+    ) -> None:
         _validate_name(name)
         if every_seconds < 60:
             raise ValueError("cron every_seconds must be at least 60")
-        if not prompt.strip():
-            raise ValueError("cron prompt cannot be empty")
+        handling_note = handling_note.strip() or DEFAULT_CRON_NOTE
         next_run_at = time.time() + every_seconds
         with self._connect() as conn:
             conn.execute(
@@ -49,7 +55,7 @@ class CronStore:
                     next_run_at = excluded.next_run_at,
                     updated_at = current_timestamp
                 """,
-                (name, prompt.strip(), every_seconds, int(enabled), next_run_at),
+                (name, handling_note.strip(), every_seconds, int(enabled), next_run_at),
             )
 
     def set_enabled(self, name: str, enabled: bool) -> None:
@@ -99,7 +105,7 @@ class CronStore:
         return [
             {
                 "name": row[0],
-                "prompt": row[1],
+                "handling_note": row[1],
                 "every_seconds": row[2],
                 "enabled": bool(row[3]),
                 "last_run_at": row[4],
@@ -198,7 +204,7 @@ class CronRunner:
         job = self.store.get_job(name)
         if not job:
             raise ValueError(f"Unknown cron job: {name}")
-        content = f"Scheduled job `{job.name}` fired.\n\nJob instructions:\n{job.prompt}"
+        content = f"Scheduled job `{job.name}` fired.\n\nJob handling note:\n{job.handling_note}"
         try:
             response = await self.agent.run_internal_event(content, f"cron:{job.name}")
         except Exception as exc:
@@ -213,7 +219,7 @@ class CronRunner:
 def _row_to_job(row: sqlite3.Row | tuple[Any, ...]) -> CronJob:
     return CronJob(
         name=row[0],
-        prompt=row[1],
+        handling_note=row[1],
         every_seconds=int(row[2]),
         enabled=bool(row[3]),
         next_run_at=float(row[4]),

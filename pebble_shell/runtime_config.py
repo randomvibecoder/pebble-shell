@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 
-ALLOWED_KEYS = {"openai_model", "heartbeat_every_seconds"}
+ALLOWED_KEYS = {"heartbeat_every_seconds"}
 
 
 class RuntimeConfigStore:
@@ -28,9 +28,6 @@ class RuntimeConfigStore:
             if seconds < 0:
                 raise ValueError("heartbeat_every_seconds must be >= 0")
             value = str(seconds)
-        if key == "openai_model" and not value.strip():
-            raise ValueError("openai_model cannot be empty")
-
         with self._connect() as conn:
             conn.execute(
                 """

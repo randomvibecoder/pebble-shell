@@ -289,25 +289,13 @@ class WorkspaceTools:
             {
                 "type": "function",
                 "function": {
-                    "name": "get_runtime_config",
-                    "description": "Read persisted runtime agent settings such as current model and heartbeat interval.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "set_runtime_config",
-                    "description": "Persist a safe runtime config change. Supported keys: openai_model, heartbeat_every_seconds.",
+                    "name": "heartbeat_set",
+                    "description": "Set the heartbeat interval in seconds. Use 0 to disable automatic heartbeat turns.",
                     "parameters": {
                         "type": "object",
-                        "required": ["key", "value"],
+                        "required": ["seconds"],
                         "properties": {
-                            "key": {
-                                "type": "string",
-                                "enum": ["openai_model", "heartbeat_every_seconds"],
-                            },
-                            "value": {"type": "string"},
+                            "seconds": {"type": "integer", "minimum": 0},
                         },
                     },
                 },
@@ -319,14 +307,14 @@ class WorkspaceTools:
                     "description": (
                         "Create or update a named internal localhost event hook. POST /webhooks/{name} records an event "
                         "and returns an event id/status immediately; it does not return the agent result. "
+                        "After creating a hook, write a note in context/MEMORY.md describing what to do when that hook fires. "
                         "When API auth is enabled, backend code should read /workspace/.pebble_shell/secrets/api_auth_token at runtime."
                     ),
                     "parameters": {
                         "type": "object",
-                        "required": ["name", "prompt"],
+                        "required": ["name"],
                         "properties": {
                             "name": {"type": "string"},
-                            "prompt": {"type": "string"},
                         },
                     },
                 },
@@ -348,7 +336,7 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "hook_show",
-                    "description": "Show one registered HTTP webhook hook, including its prompt and enabled state.",
+                    "description": "Show one registered HTTP webhook hook, including its handling note and enabled state.",
                     "parameters": {
                         "type": "object",
                         "required": ["name"],
@@ -372,7 +360,7 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "hook_disable",
-                    "description": "Disable a registered HTTP webhook hook without deleting its prompt or event history.",
+                    "description": "Disable a registered HTTP webhook hook without deleting its handling note or event history.",
                     "parameters": {
                         "type": "object",
                         "required": ["name"],
@@ -423,13 +411,12 @@ class WorkspaceTools:
                 "type": "function",
                 "function": {
                     "name": "cron_job_save",
-                    "description": "Create or update a persisted scheduled agent job. The scheduler runs the prompt every N seconds in this chat.",
+                    "description": "Create or update a persisted scheduled agent job. After creating one, write a note in context/MEMORY.md describing what to do when this cron job fires.",
                     "parameters": {
                         "type": "object",
-                        "required": ["name", "prompt", "every_seconds"],
+                        "required": ["name", "every_seconds"],
                         "properties": {
                             "name": {"type": "string"},
-                            "prompt": {"type": "string"},
                             "every_seconds": {"type": "integer", "minimum": 60},
                             "enabled": {"type": "boolean"},
                         },
@@ -535,12 +522,10 @@ class WorkspaceTools:
                 return self.read_image(arguments["path"], arguments.get("question", "Describe this image."))
             if name == "websearch":
                 return self.websearch(arguments["query"], int(arguments.get("num_results", 5)))
-            if name == "get_runtime_config":
-                return self.get_runtime_config()
-            if name == "set_runtime_config":
-                return self.set_runtime_config(arguments["key"], arguments["value"])
+            if name == "heartbeat_set":
+                return self.heartbeat_set(int(arguments["seconds"]))
             if name == "hook_set":
-                return self.hook_set(arguments["name"], arguments["prompt"])
+                return self.hook_set(arguments["name"])
             if name == "hook_list":
                 return self.hook_list(int(arguments.get("limit", 20)))
             if name == "hook_show":
@@ -558,7 +543,6 @@ class WorkspaceTools:
             if name == "cron_job_save":
                 return self.cron_job_save(
                     arguments["name"],
-                    arguments["prompt"],
                     int(arguments["every_seconds"]),
                     arguments.get("enabled", True),
                 )
@@ -892,38 +876,31 @@ class WorkspaceTools:
     def websearch(self, query: str, num_results: int = 5) -> ToolResult:
         return ToolResult(ok=True, output=json.dumps(self.exa.search(query, num_results), sort_keys=True))
 
-    def get_runtime_config(self) -> ToolResult:
-        if not self.runtime_config:
-            return ToolResult(ok=False, output="Runtime config store is not enabled")
-        return ToolResult(ok=True, output=json.dumps(self.runtime_config.all(), sort_keys=True))
-
     def _candidate_models(self) -> list[str]:
-        primary = self.openai_model
-        if self.runtime_config:
-            primary = self.runtime_config.get("openai_model") or primary
-        models = [primary]
+        models = [self.openai_model]
         for model in self.openai_fallback_models.split(","):
             model = model.strip()
             if model and model not in models:
                 models.append(model)
         return models
 
-    def set_runtime_config(self, key: str, value: str) -> ToolResult:
+    def heartbeat_set(self, seconds: int) -> ToolResult:
         if not self.runtime_config:
             return ToolResult(ok=False, output="Runtime config store is not enabled")
-        self.runtime_config.set(key, value)
-        return ToolResult(ok=True, output=f"Set {key}={value}")
+        self.runtime_config.set("heartbeat_every_seconds", str(seconds))
+        return ToolResult(ok=True, output=f"Set heartbeat_every_seconds={int(seconds)}")
 
-    def hook_set(self, name: str, prompt: str) -> ToolResult:
+    def hook_set(self, name: str) -> ToolResult:
         if not self.event_hooks:
             return ToolResult(ok=False, output="Event hook store is not enabled")
-        self.event_hooks.upsert_hook(name, prompt)
+        self.event_hooks.upsert_hook(name)
         self.event_hooks.record("hook", name, f"HTTP webhook hook {name}", {})
         return ToolResult(
             ok=True,
             output=(
                 f"Saved hook {name}; POST /webhooks/{name} records a local event and returns an event id/status immediately. "
                 "It does not return the agent result. Use an adapter-specific CLI/API for replies to external systems. "
+                f"Write a note in context/MEMORY.md describing what to do when hook `{name}` fires. "
                 "If API auth is enabled, backend callers should read the bearer token at runtime from "
                 "/workspace/.pebble_shell/secrets/api_auth_token."
             ),
@@ -972,14 +949,13 @@ class WorkspaceTools:
     def cron_job_save(
         self,
         name: str,
-        prompt: str,
         every_seconds: int,
         enabled: bool = True,
     ) -> ToolResult:
         if not self.cron:
             return ToolResult(ok=False, output="Cron store is not enabled")
-        self.cron.upsert_job(name, prompt, int(every_seconds), enabled=bool(enabled))
-        return ToolResult(ok=True, output=f"Saved cron job {name} every {every_seconds} seconds")
+        self.cron.upsert_job(name, int(every_seconds), enabled=bool(enabled))
+        return ToolResult(ok=True, output=f"Saved cron job {name} every {every_seconds} seconds; write a note in context/MEMORY.md describing what to do when it fires")
 
     def cron_list(self, jobs_limit: int = 20, runs_limit: int = 20) -> ToolResult:
         if not self.cron:

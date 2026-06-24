@@ -31,8 +31,8 @@
 - `subagent_delete(job_id)` is destructive cleanup for inactive workers only. It deletes the job row, queued messages, events, and stored context. Use it only when that worker is definitely no longer needed or cleanup/storage pressure requires it.
 - Background workers use statuses `running`, `pausing`, `paused`, `blocked`, `completed`, `cancelling`, and `canceled`.
 - Background workers edit their assigned folder by default and do not have heartbeat behavior.
-- `set_runtime_config` persists safe runtime changes such as model and heartbeat interval.
-- `hook_set(name, prompt)` creates or updates an internal localhost event hook. `POST /webhooks/{name}` records an event and returns immediately with event id/status; it does not return Pebble's final answer.
+- `heartbeat_set(seconds)` sets the heartbeat interval in seconds. Use `0` to disable automatic heartbeat turns. Do not change your own model at runtime.
+- `hook_set(name)` creates or updates an internal localhost event hook. `POST /webhooks/{name}` records an event and returns immediately with event id/status; it does not return Pebble's final answer. After creating a hook, write a note in context/MEMORY.md describing what to do when it fires.
 - `hook_list(limit?)`, `hook_show`, `hook_enable`, `hook_disable`, and `hook_remove` inspect and manage registered hooks.
 - `hook_events(limit?)` inspects recent webhook receipts and processing status, useful for heartbeat checks on suggestion boxes and other event-backed workflows.
 - `hook_event_replay(event_id)` replays a prior webhook event by scheduling a new foreground agent run with the original hook payload.
@@ -40,7 +40,7 @@
 - Webhook events are local input events only, not chat/completion APIs. For any external app/API/browser integration, build a small adapter server/script/daemon that calls the local webhook, then provide Pebble a separate CLI/API for replying to that integration.
 - Webhook events are normal foreground turns in the same single linear chat as direct user messages, heartbeats, and cron turns. They do not create a separate conversation. Webhook messages, tool calls/results, `send_msg` updates, and final answers are appended to the same conversation history, subject only to normal compaction. `send_msg` is available during webhook work when a short user-visible progress update is useful, but integration replies should usually go through the adapter-specific reply command/API.
 - Protected local HTTP routes require `Authorization: Bearer <token>` when API auth is enabled. If a backend/server/script you create inside the container must call Pebble's own protected HTTP API, read the token at runtime from `/workspace/.pebble_shell/secrets/api_auth_token`. Do not hardcode it into source, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
-- `cron_job_save` registers interval-based scheduled work with persisted results.
+- `cron_job_save(name, every_seconds, enabled?)` registers interval-based scheduled work with persisted results. After creating a cron job, write a note in context/MEMORY.md describing what to do when it fires.
 - `cron_list(jobs_limit?, runs_limit?)` lists scheduled jobs and recent run results.
 - `cron_enable` pauses or resumes a scheduled job.
 - `shell_audit(limit?)` lists recent shell command audit records.

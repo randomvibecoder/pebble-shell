@@ -11,12 +11,12 @@ def test_hook_set_registers_hook(tmp_path: Path) -> None:
     store = EventHookStore(tmp_path / "hooks.sqlite3")
     tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, event_hooks=store)
 
-    result = tools.hook_set("email", "Summarize inbound email payloads.")
+    result = tools.hook_set("email")
 
     assert result.ok
     hook = store.get_hook("email")
     assert hook is not None
-    assert hook["prompt"] == "Summarize inbound email payloads."
+    assert "handling notes" in hook["handling_note"]
     assert "channel_id" not in hook
 
 
@@ -42,7 +42,7 @@ def test_hook_management_tools_enable_disable_remove_and_show(tmp_path: Path) ->
     store = EventHookStore(tmp_path / "hooks.sqlite3")
     tools = WorkspaceTools(tmp_path / "workspace", shell_timeout_seconds=1, event_hooks=store)
 
-    assert tools.run("hook_set", {"name": "suggestion-box", "prompt": "Summarize suggestions."}).ok
+    assert tools.run("hook_set", {"name": "suggestion-box"}).ok
     assert json.loads(tools.run("hook_show", {"name": "suggestion-box"}).output)["enabled"] is True
     assert json.loads(tools.run("hook_list", {}).output)[0]["name"] == "suggestion-box"
     assert tools.run("hook_disable", {"name": "suggestion-box"}).ok

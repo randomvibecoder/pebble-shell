@@ -237,7 +237,6 @@ async def cron_job_save(cron_request: CronJobRequest, request: Request) -> dict[
     try:
         agent.cron.upsert_job(
             cron_request.name,
-            cron_request.prompt,
             cron_request.every_seconds,
             enabled=cron_request.enabled,
         )
@@ -325,7 +324,7 @@ async def _run_webhook_hook(name: str, payload: dict[str, Any]) -> AgentResponse
     hook = agent.event_hooks.get_hook(name)
     if not hook:
         raise ValueError(f"Unknown webhook hook: {name}")
-    content = format_webhook_message(name, hook["prompt"], payload)
+    content = format_webhook_message(name, hook["handling_note"], payload)
     return await agent.run_internal_event(content, f"webhook:{name}")
 
 
@@ -349,4 +348,3 @@ def _require_allowed_discord_user(user_id: str) -> None:
     allowed = get_settings().discord_allowed_user_id.strip()
     if allowed and str(user_id) != allowed:
         raise HTTPException(status_code=403, detail="discord user is not allowed")
-

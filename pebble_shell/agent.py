@@ -62,7 +62,7 @@ Tool use:
 - Webhook turns may use send_msg for brief user-visible progress updates, but send_msg is not the generic response path for every integration. Use the integration's adapter-specific reply tool when one exists.
 - Pebble's protected local HTTP routes use API_AUTH_TOKEN when configured. If you build a backend/server/script inside the container that needs to call Pebble's own protected HTTP API, make that program read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token and send Authorization: Bearer <token>. Do not copy the token into source code, browser JavaScript, logs, replies, or context files. Static browser pages cannot safely use this secret directly; use a backend/proxy for authenticated calls.
 - Use cron_job_save for specific recurring automations, cron_list to inspect scheduled jobs/runs, and cron_enable to pause or resume a scheduled job; use heartbeat for broad periodic awareness.
-- Use set_runtime_config for user-requested model or heartbeat interval changes.
+- Use heartbeat_set for user-requested heartbeat interval changes. Do not change your own model at runtime.
 - Durable memory lives in context/MEMORY.md. Use read, edit, write, or patch to maintain context/MEMORY.md when the user asks you to remember stable preferences, facts, or operating notes.
 
 Memory:
@@ -287,7 +287,7 @@ class CodingAgent:
         replay_event_id = self.event_hooks.record_webhook_event(str(event["name"]), dict(event["payload"]), background=True)
         self.event_hooks.mark_webhook_event_processing(replay_event_id)
         try:
-            content = format_webhook_message(str(event["name"]), str(hook["prompt"]), dict(event["payload"]))
+            content = format_webhook_message(str(event["name"]), str(hook["handling_note"]), dict(event["payload"]))
             response = await self.run_internal_event(content, f"webhook:{event['name']}:replay")
         except Exception as exc:
             self.event_hooks.mark_webhook_event_failed(replay_event_id, str(exc))
@@ -904,7 +904,7 @@ class CodingAgent:
 
     @property
     def current_model(self) -> str:
-        return self.runtime_config.get("openai_model") or self.settings.openai_model
+        return self.settings.openai_model
 
     def candidate_models(self, primary_model: str | None = None) -> list[str]:
         models = []

@@ -9,6 +9,7 @@ from typing import Any
 
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+DEFAULT_HOOK_NOTE = "Read context/MEMORY.md and context files for handling notes for this hook name."
 
 
 class EventHookStore:
@@ -41,10 +42,9 @@ class EventHookStore:
             for row in rows
         ]
 
-    def upsert_hook(self, name: str, prompt: str) -> None:
+    def upsert_hook(self, name: str, handling_note: str = DEFAULT_HOOK_NOTE) -> None:
         _validate_name(name)
-        if not prompt.strip():
-            raise ValueError("hook prompt cannot be empty")
+        prompt = handling_note.strip() or DEFAULT_HOOK_NOTE
         with self._connect() as conn:
             conn.execute(
                 """
@@ -66,7 +66,7 @@ class EventHookStore:
             ).fetchone()
         if not row:
             return None
-        return {"name": row[0], "prompt": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
+        return {"name": row[0], "handling_note": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
 
     def list_hooks(self, limit: int = 20) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 50))
@@ -76,7 +76,7 @@ class EventHookStore:
                 (limit,),
             ).fetchall()
         return [
-            {"name": row[0], "prompt": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
+            {"name": row[0], "handling_note": row[1], "enabled": bool(row[2]), "updated_at": row[3]}
             for row in rows
         ]
 
@@ -208,12 +208,12 @@ def _validate_name(name: str) -> None:
         raise ValueError("name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens")
 
 
-def format_webhook_message(name: str, prompt: str, payload: dict[str, Any], now: datetime | None = None) -> str:
+def format_webhook_message(name: str, handling_note: str, payload: dict[str, Any], now: datetime | None = None) -> str:
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     return (
         f"This is a webhook turn. The time is {timestamp}.\n\n"
         f"Webhook hook `{name}` fired.\n\n"
-        f"Hook instructions:\n{prompt}\n\n"
+        f"Hook handling note:\n{handling_note}\n\n"
         f"Payload JSON:\n{payload}"
     )
 

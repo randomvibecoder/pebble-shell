@@ -27,7 +27,7 @@ class FakeWebhookAgent:
         replay_event_id = self.event_hooks.record_webhook_event(event["name"], event["payload"], background=True)
         self.event_hooks.mark_webhook_event_processing(replay_event_id)
         response = await self.run_internal_event(
-            format_webhook_message(event["name"], hook["prompt"], event["payload"]),
+            format_webhook_message(event["name"], hook["handling_note"], event["payload"]),
             f"webhook:{event['name']}:replay",
         )
         self.event_hooks.mark_webhook_event_completed(replay_event_id, response.content)

@@ -144,7 +144,8 @@ async def test_core_system_prompt_describes_foreground_background_runtime(tmp_pa
     assert "write_stdin(session_id" in core_prompt
     assert "context/MEMORY.md" in core_prompt
     assert "record_memory" not in core_prompt
-    assert "set_runtime_config" in core_prompt
+    assert "heartbeat_set" in core_prompt
+    assert "set_runtime_config" not in core_prompt
 
 
 @pytest.mark.asyncio

@@ -392,58 +392,37 @@ Failures:
 {"ok": false, "output": "send_msg msg must be 500 characters or fewer"}
 ```
 
-## Runtime Config Tools
+## Heartbeat Tool
 
-### `get_runtime_config()`
+### `heartbeat_set(seconds: int)`
 
-Reads persisted runtime settings.
-
-Success output is a JSON object containing any stored supported keys:
-
-```json
-{
-  "heartbeat_every_seconds": "7200",
-  "openai_model": "model/name"
-}
-```
-
-Failure:
-
-```json
-{"ok": false, "output": "Runtime config store is not enabled"}
-```
-
-### `set_runtime_config(key: str, value: str)`
-
-Persists a runtime setting. Supported keys are `openai_model` and `heartbeat_every_seconds`.
+Sets the heartbeat interval in seconds. Use `0` to disable automatic heartbeat turns. Pebble cannot change its own model at runtime.
 
 Success:
 
 ```json
-{"ok": true, "output": "Set <key>=<value>"}
+{"ok": true, "output": "Set heartbeat_every_seconds=<seconds>"}
 ```
 
 Failures:
 
 ```json
 {"ok": false, "output": "Runtime config store is not enabled"}
-{"ok": false, "output": "Unsupported runtime config key: <key>"}
 {"ok": false, "output": "heartbeat_every_seconds must be >= 0"}
-{"ok": false, "output": "openai_model cannot be empty"}
 ```
 
 ## Event Hook Tools
 
 Hook names must be `1..64` characters and contain only letters, numbers, underscores, or hyphens.
 
-### `hook_set(name: str, prompt: str)`
+### `hook_set(name: str)`
 
-Creates or updates a local webhook hook.
+Creates or updates a local webhook hook. After creating a hook, write a note in `context/MEMORY.md` describing what to do when that hook fires.
 
 Success:
 
 ```json
-{"ok": true, "output": "Saved hook <name>; POST /webhooks/<name> records a local event and returns an event id/status immediately. It does not return the agent result. Use an adapter-specific CLI/API for replies to external systems. If API auth is enabled, backend callers should read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token."}
+{"ok": true, "output": "Saved hook <name>; POST /webhooks/<name> records a local event and returns an event id/status immediately. It does not return the agent result. Use an adapter-specific CLI/API for replies to external systems. Write a note in context/MEMORY.md describing what to do when hook `<name>` fires. If API auth is enabled, backend callers should read the bearer token at runtime from /workspace/.pebble_shell/secrets/api_auth_token."}
 ```
 
 Failures:
@@ -451,7 +430,6 @@ Failures:
 ```json
 {"ok": false, "output": "Event hook store is not enabled"}
 {"ok": false, "output": "name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens"}
-{"ok": false, "output": "hook prompt cannot be empty"}
 ```
 
 ### `hook_list(limit: int = 20)`
@@ -464,8 +442,8 @@ Success output is a JSON array:
 [
   {
     "enabled": true,
+    "handling_note": "Read context/MEMORY.md and context files for handling notes for this hook name.",
     "name": "suggestions",
-    "prompt": "Handle suggestion payloads.",
     "updated_at": "YYYY-MM-DD HH:MM:SS"
   }
 ]
@@ -486,8 +464,8 @@ Success output is a JSON object:
 ```json
 {
   "enabled": true,
+  "handling_note": "Read context/MEMORY.md and context files for handling notes for this hook name.",
   "name": "suggestions",
-  "prompt": "Handle suggestion payloads.",
   "updated_at": "YYYY-MM-DD HH:MM:SS"
 }
 ```
@@ -584,14 +562,14 @@ Failures:
 
 ## Cron Tools
 
-### `cron_job_save(name: str, prompt: str, every_seconds: int, enabled: bool = true)`
+### `cron_job_save(name: str, every_seconds: int, enabled: bool = true)`
 
-Creates or updates a scheduled job. `every_seconds` must be at least 60.
+Creates or updates a scheduled job. `every_seconds` must be at least 60. After creating one, write a note in `context/MEMORY.md` describing what to do when that job fires.
 
 Success:
 
 ```json
-{"ok": true, "output": "Saved cron job <name> every <every_seconds> seconds"}
+{"ok": true, "output": "Saved cron job <name> every <every_seconds> seconds; write a note in context/MEMORY.md describing what to do when it fires"}
 ```
 
 Failures:
@@ -600,7 +578,6 @@ Failures:
 {"ok": false, "output": "Cron store is not enabled"}
 {"ok": false, "output": "name must be 1-64 chars and contain only letters, numbers, underscores, or hyphens"}
 {"ok": false, "output": "cron every_seconds must be at least 60"}
-{"ok": false, "output": "cron prompt cannot be empty"}
 ```
 
 ### `cron_list(jobs_limit: int = 20, runs_limit: int = 20)`
@@ -615,10 +592,10 @@ Success output is a JSON object:
     {
       "enabled": true,
       "every_seconds": 3600,
+      "handling_note": "Read context/MEMORY.md and context files for handling notes for this cron job name.",
       "last_run_at": null,
       "name": "hourly",
       "next_run_at": 1710000000.0,
-      "prompt": "Do the scheduled task.",
       "updated_at": "YYYY-MM-DD HH:MM:SS"
     }
   ],

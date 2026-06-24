@@ -104,7 +104,7 @@ The agent can register bounded, auditable runtime behavior through these primiti
 
 - `context/MEMORY.md`: durable memory maintained with normal file tools.
 - `hook_set`: register a named HTTP webhook, for example an email event hook. Manage hooks with `hook_list`, `hook_show`, `hook_enable`, `hook_disable`, and `hook_remove`.
-- `set_runtime_config`: change safe runtime settings like model or heartbeat interval.
+- `heartbeat_set`: change the heartbeat interval in seconds.
 - `cron_job_save`: create scheduled automations with persisted run history.
 - `hook_events` and `hook_event_replay`: inspect recent webhook receipts or replay a prior event.
 

@@ -17,7 +17,6 @@ class WebhookAcceptedResponse(BaseModel):
 
 class CronJobRequest(BaseModel):
     name: str
-    prompt: str
     every_seconds: int
     enabled: bool = True
 
